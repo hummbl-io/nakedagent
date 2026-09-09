@@ -1,0 +1,90 @@
+I'll do a thorough read-only review. Let me start by reading the docs and all source files in parallel.Now let me read all the source files and tests in parallel.Now let me run the test suite to verify the reported 13/13.13/13 confirmed real (Python 3.14.6). Let me verify my regex analysis with a quick local probe — no files written, just exercising the parser to confirm the nested-fence failure mode is silent corruption, not just a parse failure.Both confirmed. Case A silently truncates the written file (no error); Case B truncates AND fabricates a real `shell` tool call whose body `rm -rf /` the loop will execute. Let me verify the `_split_search_replace` marker-collision cases too.All three confirmed. Case E is the severe one: patching a file containing git conflict markers reports "Patched f.txt." (success) but silently writes the wrong content. Let me confirm the uncaught-exception crash path in `tool_patch` (no `errors=` on its read) and that any tool exception escapes the loop.I have everything I need. Here are the findings, most severe first.
+
+---
+
+## nakedagent code review
+
+Tests: re-ran `python -m unittest discover -s tests -v` myself — **13/13 pass is real** (6 parser + 7 tools, 0.074s, Python 3.14.6). Not stale.
+
+### 1. CRITICAL — Nested-fence parser silently corrupts `write` AND fabricates real `shell` calls
+**File:** `nakedagent/toolcall.py:24-29` (`_FENCE_RE`)
+
+The regex is not fence-nesting-aware. `docs/architecture.md:37-41` acknowledges this but frames it as "terminate early" / a parse failure / "not hit in testing." That understates it badly. Because the content group is lazy (`.*?`) and the close is just `\n?` + three backticks, the first inner ```` ``` ```` is consumed as the *close* of the outer fence. With **two or more** inner fences, the second inner fence's opening ```` ``` ```` is then left in-stream and re-matched as a *new* tool call.
+
+Verified locally:
+
+- **Case A** — ` ```write docs.md` whose body contains one ` ```python` example: the file is written with content `# Title` only. The entire python example block is **silently dropped**. No error. The model believes it wrote the full doc.
+- **Case B** — ` ```write docs.md` whose body contains a ` ```python` block followed by a ` ```shell\nrm -rf /\n``` ` example: parses as **two** calls — `write docs.md` (content `intro`, truncated) **and** `shell` (content `rm -rf /`). The loop then **executes `rm -rf /`** via `subprocess.run(shell=True)`.
+
+Failure scenario: a model writes a markdown/README file documenting commands — the single most common agent task on a fresh repo. Any doc with ≥2 fenced examples where the second is shell-tagged causes (a) silent truncation of the written file and (b) execution of the example command as a real shell call. The model never intended to run a command. This is both silent data corruption *and* an unintended-execution security hole, independent of the "shell is unsandboxed" discussion.
+
+**Block.** Fix before anyone else runs this. Real fix is content-aware fence counting (track ``` count, match the *matching* closing fence). At minimum, refuse to parse a fence whose body contains a line of three-or-more backticks.
+
+### 2. HIGH — `_split_search_replace` finds markers by absolute first-match → silent wrong-content edits
+**File:** `nakedagent/tools.py:109-121`
+
+`sep`, `end`, and `start` are each found by scanning from index 0 independently (`next(i for i, ln in enumerate(lines) if ...)`). They are not found sequentially after the previous marker. So a marker-shaped line *inside* the SEARCH or REPLACE body hijacks the split.
+
+Verified locally:
+
+- **Case C** — SEARCH body contains a `=======` line: `search` gets truncated to `keep`, `replace` becomes `old\n=======\nnew`.
+- **Case E** — end-to-end: patching a file that already contains git conflict markers (`<<<<<<< HEAD` / `=======` / `>>>>>>> branch`). `tool_patch` returns **"Patched f.txt."** (success) but writes `y\n=======\ny\n>>>>>>> branch\n` instead of the intended `RESOLVED`. Silent corruption with a success message.
+
+Failure scenario: a model resolves git merge conflicts — a completely natural agent task — and silently mangles the file, reporting success. Also hits any markdown file using `=======` as an H1 underline, or any `>>>>>>>`/`<<<<<<<` arrow text in the diffed region.
+
+**Block before wide release.** Find `<<<<<<<` first, then `=======` at index > start, then `>>>>>>>` at index > sep. Reject if a second `<<<<<<<` appears before `>>>>>>>`.
+
+### 3. HIGH — Uncaught tool exceptions crash the agent with a raw traceback
+**File:** `nakedagent/loop.py:77` (`result = tool(call.args, call.content, workspace)`) and `nakedagent/cli.py:27-31`
+
+`step()` calls tools with no try/except. `cli.py` only catches `OllamaError` and `KeyboardInterrupt`. So any other exception escapes as an unhandled traceback. Verified:
+
+- `tool_patch` (`tools.py:98`) reads with `encoding="utf-8"` and **no `errors=`** (unlike `tool_read` which uses `errors="replace"`). A latin-1/binary file → `UnicodeDecodeError` → crash.
+- `tool_write` (`tools.py:70`) `target.parent.mkdir(parents=True, exist_ok=True)` → `FileExistsError` when a path component is an existing file (e.g. `write a/b.txt` where `a` is a file) → crash. Also `PermissionError`/disk-full on `write_text`.
+
+This directly contradicts `docs/architecture.md:5-7` and `:56-59`, which promise errors are "fed back to the model... rather than the loop just dying." Expected errors are; unexpected ones aren't.
+
+**Fix.** Wrap the `tool(...)` call in `step()` with `except Exception as e: result = f"Error: {type(e).__name__}: {e}"`. One try/except, fixes the whole class. Also make `tool_patch` use `errors="replace"` (or `errors="strict"` handled) to match `tool_read`.
+
+### 4. MEDIUM — `shell` tool: no gating, and #1 makes it worse
+**File:** `nakedagent/tools.py:26-42`
+
+Bare `subprocess.run(cmd, shell=True, cwd=workspace, timeout=120)`. No allowlist, no confirmation, no resource limits (beyond the 120s wall clock). By itself this is a defensible v1 design choice — gptme runs shell too — but gptme has a confirmation prompt and aider restricts. A local 7B model hallucinating `rm -rf build/` or `git reset --hard` with no prompt is a real risk for "recommended to anyone."
+
+Critically, finding #1 turns "model writes a doc" into "model executes example shell commands it never meant to run," which makes the lack of gating far more dangerous than it would be in isolation.
+
+**Not a block for MVP-as-stated, but block before wider recommendation.** At minimum: a y/N confirmation prompt on `shell` (stdin TTY check so one-shot mode can opt out), and a one-line prominent warning in the README. The combination of #1 unfixed + ungated shell is the worst case.
+
+### 5. MEDIUM — No loop iteration cap
+**File:** `nakedagent/loop.py:90-91`, `108-109`
+
+`while step(...): pass` with no counter. A model stuck emitting tool calls loops forever, each iteration hitting Ollama (300s timeout each). No way to bound cost/time. **Nice-to-have but real** — add a max-steps (e.g. 25) with a clean stop and message.
+
+### 6. LOW — Test coverage gaps (loop.py, cli.py, edge cases)
+`loop.py` and `cli.py` have **zero** tests. `step()` is the core of the agent and is trivially testable by monkeypatching `nakedagent.loop.llm.chat` to return canned replies — that test would have caught finding #1 in a single assertion. Also untested: `_split_search_replace` malformed markers (finding #2), nested-fence corruption (finding #1), symlink path containment, the directory-read branch. The README/architecture are honest about "no tests beyond tool/parser unit level," so this isn't a surprise — but a mocked-`llm.chat` loop test is the single highest-value test to add before a stranger opens a PR.
+
+### 7. LOW — `tool_read` directory branch is platform-fragile
+**File:** `nakedagent/tools.py:56-58`
+
+Catches `IsADirectoryError`. On Windows, `read_text` on a directory raises `PermissionError`, not `IsADirectoryError` → uncaught crash (subset of #3). Catch `OSError` instead, or `(IsADirectoryError, PermissionError)`.
+
+### 8. LOW — Shell output semantics
+**File:** `nakedagent/tools.py:41-42`
+
+`stdout + stderr` concatenated with no separator; non-zero exit is not surfaced as an error, only as `(exit N, no output)` when there's no output. A failing `mkdir` that prints nothing tells the model "(exit 1, no output)" — easy for a 7B model to miss. Consider prefixing stderr with `--- stderr ---` and always including `exit {code}`. Nice-to-have.
+
+### 9. LOW — ANSI codes printed unconditionally
+**File:** `nakedagent/loop.py:66, 78`
+
+`\033[2m...\033[0m` printed regardless of TTY/ANSI support. On a non-ANSI terminal or piped output these render as literal escape sequences. Cosmetic. Gate on `sys.stdout.isatty()`.
+
+---
+
+### Path-containment check — verified adequate
+You asked specifically about `target.is_relative_to(workspace.resolve())` bypasses. I checked the reasoning and it holds: `.resolve()` follows symlinks and normalizes `..`, so a symlinked dir pointing outside workspace resolves outside → rejected; `..` sequences resolve outside → rejected (tested); absolute paths (`/etc/passwd`, `C:\Windows\...`) replace the join and resolve outside → rejected. The **only** bypass is the `shell` tool itself, which sidesteps all path checks by design (finding #4). No separate path-containment bug.
+
+---
+
+### Verdict
+**Ship with fixes.** Findings #1 and #2 are silent data-corruption bugs (and #1 is also unintended command execution) that hit common, legitimate agent tasks — fix both before any wider audience; add #3 (one try/except) and a mocked-`llm` loop test in the same pass. The zero-dependency discipline and the parser/tool structure are sound; the problems are in two parsers that need to be nesting/marker-aware, not in the architecture.
+EXIT=0
