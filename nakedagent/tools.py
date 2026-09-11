@@ -8,6 +8,7 @@ own mistakes rather than the loop just dying.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -18,34 +19,128 @@ ToolFunc = Callable[[str, str, Path], str]
 MAX_OUTPUT = 8000  # chars; keeps one runaway command from blowing the context
 
 
+def _is_allowed_shell_command(cmd: str, allowlist: tuple[str, ...]) -> bool:
+    """Return True when `cmd` matches any allowlist entry exactly or by prefix."""
+    if not allowlist:
+        return False
+    normalized = cmd.strip()
+    for pattern in allowlist:
+        item = pattern.strip()
+        if not item:
+            continue
+        if normalized == item or normalized.startswith(item + " "):
+            return True
+    return False
+
+
+def _log_shell_event(
+    workspace: Path,
+    command: str,
+    *,
+    allowed: bool,
+    tty: bool,
+    reason: str | None = None,
+) -> None:
+    """Append a JSONL audit event for shell invocations.
+
+    Shell is a high-trust tool; this file is meant for local auditability.
+    Logging failures never block execution: best-effort audit.
+    """
+    log_path = workspace / ".nakedagent" / "shell_audit.jsonl"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "event": "shell_tool",
+            "allowed": allowed,
+            "tty": tty,
+            "command": command,
+            "reason": reason,
+        }
+        from datetime import datetime, timezone
+
+        event["ts_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+            "+00:00", "Z"
+        )
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False))
+            f.write("\n")
+    except Exception:
+        # Auditability should not prevent the tool call from happening.
+        pass
+
+
 def _truncate(s: str) -> str:
     if len(s) <= MAX_OUTPUT:
         return s
     return s[:MAX_OUTPUT] + f"\n...[truncated, {len(s) - MAX_OUTPUT} more chars]"
 
 
-def tool_shell(args: str, content: str, workspace: Path) -> str:
+def tool_shell(
+    args: str,
+    content: str,
+    workspace: Path,
+    *,
+    allow_shell: bool = False,
+    shell_allowlist: tuple[str, ...] = (),
+    shell_timeout: int = 120,
+) -> str:
     """Runs `content` as a shell command in the workspace.
 
-    No allowlist, no resource limits beyond the timeout below -- this is an
-    unrestricted `subprocess.run(shell=True)`. The only gate is an
-    interactive y/N confirmation, and that only fires when stdin is a real
-    TTY: a one-shot/piped/non-interactive run has no one to answer a
-    prompt, so it proceeds unconfirmed. That's a real trust boundary, not
-    an oversight -- documented in README.md.
+    By default, non-interactive execution is denied unless `allow_shell` is
+    explicitly set. Non-interactive execution can still be bounded with
+    `--shell-allowlist` to permit safe commands in automation contexts.
     """
     cmd = content.strip() or args.strip()
     if not cmd:
         return "Error: shell tool got no command."
-    if sys.stdin.isatty():
-        print(f"\033[33mnakedagent wants to run:\033[0m {cmd}")
+
+    if shell_timeout <= 0:
+        return "Error: --shell-timeout must be a positive integer."
+
+    is_tty = sys.stdin.isatty()
+    if not is_tty and not allow_shell:
+        reason = "non-interactive shell execution requires --allow-shell"
+        _log_shell_event(
+            workspace, cmd, allowed=False, tty=False, reason=reason
+        )
+        return f"Error: shell execution blocked ({reason})."
+    if (
+        not is_tty
+        and allow_shell
+        and not _is_allowed_shell_command(cmd, shell_allowlist)
+    ):
+        reason = "non-interactive command is not in --shell-allowlist"
+        _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
+        return f"Error: shell execution blocked ({reason})."
+
+    if is_tty:
+        prefix = (
+            "\033[33mnakedagent wants to run:\033[0m"
+            if sys.stdout.isatty()
+            else "nakedagent wants to run:"
+        )
+        print(f"{prefix} {cmd}")
         try:
             answer = input("Allow? [y/N] ").strip().lower()
         except EOFError:
             # isatty() said yes but the read still failed -- fail safe:
             # no answer means don't run, not "crash the whole loop."
+            _log_shell_event(
+                workspace,
+                cmd,
+                allowed=False,
+                tty=True,
+                reason="interactive confirmation unreadable",
+            )
             return "Error: could not read a confirmation; command not run."
         if answer not in ("y", "yes"):
+            _log_shell_event(
+                workspace,
+                cmd,
+                allowed=False,
+                tty=True,
+                reason="user declined"
+            )
             return "Error: user declined to run this command."
     try:
         proc = subprocess.run(
@@ -54,12 +149,36 @@ def tool_shell(args: str, content: str, workspace: Path) -> str:
             cwd=workspace,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=shell_timeout,
             stdin=subprocess.DEVNULL,  # a command that tries to read stdin
             # would otherwise hang instead of failing fast (devin review, P3.8)
         )
     except subprocess.TimeoutExpired:
-        return "Error: command timed out after 120s."
+        _log_shell_event(
+            workspace,
+            cmd,
+            allowed=False,
+            tty=is_tty,
+            reason=f"timeout after {shell_timeout}s",
+        )
+        return f"Error: command timed out after {shell_timeout}s."
+    except Exception as exc:
+        _log_shell_event(
+            workspace,
+            cmd,
+            allowed=False,
+            tty=is_tty,
+            reason=f"execution failure: {type(exc).__name__}: {exc}",
+        )
+        return f"Error: command execution failed: {type(exc).__name__}: {exc}"
+
+    _log_shell_event(
+        workspace,
+        cmd,
+        allowed=True,
+        tty=is_tty,
+        reason=None,
+    )
     parts = [f"(exit {proc.returncode})"]
     if proc.stdout:
         parts.append(proc.stdout)
@@ -171,3 +290,21 @@ TOOLS: dict[str, ToolFunc] = {
     "write": tool_write,
     "patch": tool_patch,
 }
+
+# usage: the fenced-block example shown to the model in the system prompt.
+# Travels with the function so a plugin that replaces a tool can replace its
+# prompt example too -- the chef's opinion lives on the tool, not in a static
+# string the seam can't reach (DOCTRINE.md, "the seam is the substitution
+# mechanism"). A plugin tool with no `.usage` is listed by name only.
+tool_shell.usage = "```shell\n<a shell command to run>\n```"
+tool_read.usage = "```read <path>\n```"
+tool_write.usage = "```write <path>\n<full file content to write>\n```"
+tool_patch.usage = (
+    "```patch <path>\n"
+    "<<<<<<< SEARCH\n"
+    "<exact existing text>\n"
+    "=======\n"
+    "<replacement text>\n"
+    ">>>>>>> REPLACE\n"
+    "```"
+)

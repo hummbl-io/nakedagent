@@ -1,9 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+from functools import partial
 from unittest.mock import patch
 
-from nakedagent.loop import MAX_STEPS, _run_until_done, step
+from nakedagent.loop import MAX_STEPS, _run_until_done, _system_prompt, step, SYSTEM_PROMPT
+from nakedagent.tools import TOOLS, tool_shell
 
 
 class TestStep(unittest.TestCase):
@@ -23,7 +25,11 @@ class TestStep(unittest.TestCase):
     def test_simple_tool_call_runs_and_returns_true(self, mock_chat, _mock_isatty):
         mock_chat.return_value = "```shell\necho hi\n```"
         messages = [{"role": "user", "content": "run echo hi"}]
-        ran_again = step(messages, "fake-model", self.workspace)
+        tools = dict(TOOLS)
+        tools["shell"] = partial(
+            tool_shell, allow_shell=True, shell_allowlist=("echo",)
+        )
+        ran_again = step(messages, "fake-model", self.workspace, tools=tools)
         self.assertTrue(ran_again)
         self.assertIn("hi", messages[-1]["content"])
 
@@ -78,6 +84,23 @@ class TestStep(unittest.TestCase):
         step(messages, "fake-model", self.workspace)
         self.assertIn("unknown tool", messages[-1]["content"])
 
+    @patch("sys.stdin.isatty", return_value=False)
+    @patch("nakedagent.loop.llm.chat")
+    def test_uppercase_fence_tag_runs_the_tool(self, mock_chat, _mock_isatty):
+        # bespoke: models often emit ```SHELL (valid markdown, capitalized
+        # language tag). Without case-normalization at the lookup this became
+        # "unknown tool 'SHELL'" and the command never ran -- a silent
+        # capability gap, not a crash.
+        mock_chat.return_value = "```SHELL\necho upper-works\n```"
+        messages = [{"role": "user", "content": "run it"}]
+        tools = dict(TOOLS)
+        tools["shell"] = partial(
+            tool_shell, allow_shell=True, shell_allowlist=("echo",)
+        )
+        ran_again = step(messages, "fake-model", self.workspace, tools=tools)
+        self.assertTrue(ran_again)
+        self.assertIn("upper-works", messages[-1]["content"])
+
     @patch("nakedagent.loop.llm.chat")
     def test_tool_exception_is_caught_not_raised(self, mock_chat):
         # Regression for finding #3: a tool bug must reach the model as an
@@ -92,10 +115,63 @@ class TestStep(unittest.TestCase):
     def test_max_steps_is_a_real_bound(self, mock_chat, _mock_isatty):
         # A model stuck always emitting another tool call must not loop
         # forever -- _run_until_done is where the cap actually lives.
-        mock_chat.return_value = "```shell\ntrue\n```"  # always another call
+        mock_chat.return_value = (
+            "```shell\npython -c \"import sys; sys.exit(0)\"\n```"  # always another call
+        )
         messages = [{"role": "user", "content": "loop forever"}]
-        _run_until_done(messages, "fake-model", self.workspace, "http://unused")
+        tools = dict(TOOLS)
+        tools["shell"] = partial(
+            tool_shell, allow_shell=True, shell_allowlist=("python",)
+        )
+        _run_until_done(messages, "fake-model", self.workspace, "http://unused", tools=tools)
         self.assertEqual(mock_chat.call_count, MAX_STEPS)
+
+
+class TestSystemPrompt(unittest.TestCase):
+    """The system prompt is built from the tool registry, not a static string.
+    Each tool's `.usage` attribute contributes its own fenced-block example, so
+    a plugin that replaces a tool replaces its prompt example too (DOCTRINE.md:
+    the chef's opinion lives on the tool, not in a static string the seam
+    can't reach). Tools without `.usage` fall back to a name-only listing."""
+
+    def test_no_plugins_byte_identical_to_static(self):
+        # the four foundation tools all carry .usage, so building from the
+        # registry must produce the exact same string as the old static prompt.
+        self.assertEqual(_system_prompt(TOOLS), SYSTEM_PROMPT)
+
+    def test_plugin_usage_replaces_foundation_example(self):
+        # a plugin that replaces `shell` with different semantics must also
+        # replace the prompt example -- otherwise the model gets the
+        # foundation's syntax while the actual function expects something else.
+        def my_shell(args, content, workspace):
+            return "blocked"
+        my_shell.usage = "```shell\n<command> [dry-run only]\n```"
+        tools = dict(TOOLS)
+        tools["shell"] = my_shell
+        prompt = _system_prompt(tools)
+        self.assertIn("[dry-run only]", prompt)
+        self.assertNotIn("<a shell command to run>", prompt)
+
+    def test_plugin_tool_without_usage_listed_by_name(self):
+        # a plugin tool with no .usage is still discoverable -- listed by name
+        # in the "additional tools" line, same as before the per-tool usage
+        # refactor. The plugin author doesn't have to set .usage to get
+        # discoverability.
+        def my_tool(args, content, workspace):
+            return "ok"
+        tools = dict(TOOLS)
+        tools["mytool"] = my_tool
+        prompt = _system_prompt(tools)
+        self.assertIn("`mytool`", prompt)
+        self.assertNotIn("```mytool", prompt)  # no fenced example
+
+    def test_disabled_tool_absent_from_prompt(self):
+        # DISABLE removes a tool from the registry, so it must also be absent
+        # from the prompt -- the model never sees it, never tries to call it.
+        tools = {k: v for k, v in TOOLS.items() if k != "shell"}
+        prompt = _system_prompt(tools)
+        self.assertNotIn("```shell", prompt)
+        self.assertIn("```read", prompt)  # others still present
 
 
 if __name__ == "__main__":

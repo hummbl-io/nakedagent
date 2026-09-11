@@ -56,16 +56,17 @@ actually runs -- not just that the parser returns the right thing.
 ## Tools (`nakedagent/tools.py`)
 
 Four functions, one dict (`TOOLS`), same signature:
-`(args: str, content: str, workspace: Path) -> str`. Adding a tool is: write
-a function with that signature, add it to the dict, add its format to
-`SYSTEM_PROMPT` in `loop.py`. No registration ceremony, no class hierarchy.
+`(args: str, content: str, workspace: Path) -> str`. Adding a *foundation*
+tool is: write a function with that signature, add it to the dict, add its
+format to `SYSTEM_PROMPT` in `loop.py`. No registration ceremony, no class
+hierarchy. Adding a *user* tool (a substitution, per `DOCTRINE.md`) is: drop
+a `.py` file in a plugin dir — see the Plugins section below.
 
-- `shell` — `subprocess.run(shell=True)`, 120s timeout, output truncated at
-  8000 chars. Still no allowlist or resource limits (that's an intentional
-  v1 trade-off, per the review below), but as of the same review pass it
-  gates on an interactive y/N confirmation whenever stdin is a real TTY —
-  and fails safe (declines, doesn't crash) if `isatty()` says yes but the
-  read still fails, which happens in some sandboxed shells.
+- `shell` — `subprocess.run(shell=True)`, configurable timeout (default 120s,
+  via `--shell-timeout`), output truncated at 8000 chars. It now supports the
+  interactive confirmation gate and
+  non-interactive hardening via `--allow-shell` + `--shell-allowlist`:
+  non-interactive calls are denied unless explicitly enabled and matched.
 - `read` — exact file dump (no line numbers — an earlier version prefixed
   `N\t` per line, but that meant a model copying `read` output straight into
   a `patch` SEARCH block copied the numbers too, so every patch attempt
@@ -83,7 +84,12 @@ a function with that signature, add it to the dict, add its format to
   git conflict markers) hijack the split and silently write the wrong
   content while still reporting "Patched." A second `<<<<<<<` before the
   matching `>>>>>>>` is rejected outright for the same reason (GLM-5.2
-  review finding #2).
+  review finding #2). One marker-collision case remains by design: a
+  `=======` line *inside* the SEARCH body (e.g. a markdown H1 underline) is
+  consumed as the separator, silently splitting at the wrong place. This
+  matches aider's own first-`=======`-wins behavior, so it's a SEARCH/REPLACE
+  format limitation, not a bug -- the SEARCH text simply can't contain a
+  bare `=======` line.
 
 Every tool call is now wrapped in a `try/except Exception` in `loop.step()`
 (finding #3) — a bug in a tool reaches the model as an `Error: ...` message,
@@ -104,6 +110,48 @@ otherwise happily open `file://` and other schemes. This is a CLI flag the
 *operator* types, not something the model controls, so the severity is low,
 but there was no reason to leave it open. Caught in the second review below.
 
+## Plugins (`nakedagent/plugins.py`)
+
+The omakase substitution mechanism (see `DOCTRINE.md`). The foundation ships
+four curated tools; a user adds their own by dropping a `.py` file in a
+plugin dir. The loader scans at startup, imports each, and merges its `TOOLS`
+dict into the runtime registry — no fork, no registration, same
+`(args, content, workspace) -> str` signature.
+
+Search order (later dirs win, so user-local overrides repo-local):
+1. `<workspace>/.nakedagent/plugins/`
+2. `~/.nakedagent/plugins/`
+
+A plugin file is any `*.py` in those dirs (files starting with `_` are
+private, not loaded). It must define a module-level
+`TOOLS: dict[str, ToolFunc]` and/or `DISABLE: list[str]`. A file that fails
+to import or defines neither is skipped with a one-line warning to stderr —
+one bad plugin must not brick the agent, same fail-soft posture as a tool
+that raises in `loop.step()`. Plugin tool names are lowercased to match the
+case-insensitive dispatch.
+
+**Override:** a plugin that reuses a foundation tool's name replaces its
+function. Each tool carries a `.usage` attribute (the fenced-block example
+shown to the model in the system prompt); a plugin that replaces a tool
+should set `.usage` on its replacement too, so the model sees the new syntax
+instead of the foundation's. The system prompt is built per session from
+the merged registry — each tool with `.usage` contributes its own example,
+tools without `.usage` are listed by name only. When no plugins are loaded
+this is byte-identical to the old static prompt (all four foundation tools
+carry `.usage`).
+
+**Disable:** a plugin that lists a tool name in `DISABLE` removes it from
+the registry entirely — "send it back" rather than swap. A read-only agent
+disables `shell` and `write`; the model never sees them in the prompt, so
+it never tries to call them. `DISABLE` is applied after all `TOOLS` merges,
+so it wins over any substitution, including a plugin that both defines and
+disables a name.
+
+`ponytail:` no entry-point group, no metadata, no version negotiation. A
+plugin is just a Python file that defines `TOOLS` and/or `DISABLE`. If a
+plugin needs to declare compatibility or metadata, that is a substitution
+someone makes later, not now.
+
 ## Two independent reviews, same day
 
 The MVP was reviewed twice before this first push, by two separately-running
@@ -121,18 +169,29 @@ reviewer, not by this session).
 
 ## What's not here yet, on purpose
 
+The plugin seam (`nakedagent/plugins.py`) is the omakase substitution
+mechanism — most of the items below are now *substitutions a user makes via
+a plugin*, not foundation work waiting to be done. See `DOCTRINE.md`.
+
 - **Cloud providers** (Anthropic/OpenAI/etc). Ollama-only was the explicit v1
   scope decision — local-first, zero API-key friction for a first
   `git clone && run`. Adding one is a new module in the same shape as
-  `llm.py`'s `chat()`, no architecture change.
+  `llm.py`'s `chat()`, no architecture change. (Could be a plugin that
+  replaces the `llm.chat` call site, or a foundation module — TBD.)
 - **Streaming output.** See above.
 - **Multi-fence-per-turn safety beyond "run each in order."** No rollback if
   call 2 of 3 fails after call 1 already mutated a file.
 - **Ranked context selection** (aider's repo-map approach). v1 relies
   entirely on the model choosing to `read` what it needs.
-- **`shell`'s lack of an allowlist.** The confirmation gate (see Tools,
-  above) covers interactive use; a one-shot/piped run still executes
-  unconfirmed. Real gating (allowlist, dry-run mode) is future work.
+- **`shell` mutation safety in automation.** Added in foundation for v1:
+  non-interactive execution is off by default and only runs when
+  `--allow-shell` is set and the command matches `--shell-allowlist`.
+- **`patch` success without a diff.** The model gets `Patched {path}.` and
+  must `read` again to verify. A `difflib`-based diff in the success message
+  is a candidate plugin (wrap `tool_patch`), not foundation surface.
+- **`read` truncation without continuation.** `MAX_OUTPUT = 8000` truncates
+  a large file to its head with no way to read the rest. A line-range
+  argument or pagination is a candidate plugin.
 
 A loop-round cap (`MAX_STEPS = 25` in `loop.py`, so a model stuck emitting
 tool calls can't run forever) and loop-level test coverage (`tests/test_loop.py`,

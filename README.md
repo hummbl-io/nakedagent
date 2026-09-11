@@ -30,13 +30,23 @@ is no supply.
 ## What you get for that
 
 - **Tools**: `shell`, `read`, `write`, `patch` (search/replace edits, aider's
-  simplest edit format). That's the whole tool surface today.
+  simplest edit format). That's the whole *foundation* tool surface.
+  `shell` is confirmation-first in interactive mode and requires `--allow-shell`
+  in non-interactive mode, with optional command filtering via
+  `--shell-allowlist`.
 - **Model backend**: [Ollama](https://ollama.com) only, for now — local-first,
   no API key required to try it.
 - **Tool-call format**: the model writes a fenced code block whose language
   tag is the tool name; nakedagent parses it out of the response text after
   each turn. Works with any model that can write a code fence — no dependency
   on a provider's native function-calling API.
+- **Plugins**: drop a `.py` file in `.nakedagent/plugins/` (repo-local) or
+  `~/.nakedagent/plugins/` (user-global) that defines a `TOOLS` dict (add or
+  override tools) and/or a `DISABLE` list (remove tools entirely — e.g. a
+  read-only agent disables `shell` and `write`). Each tool carries a `.usage`
+  attribute that controls its prompt example, so a plugin replacing a tool
+  replaces its syntax too. No registration, no framework — see
+  [`DOCTRINE.md`](DOCTRINE.md) for the omakase framing.
 
 See [`docs/architecture.md`](docs/architecture.md) for how the loop and tool
 parser work, including what was learned from reading gptme's and aider's
@@ -52,12 +62,25 @@ python -m nakedagent           # interactive
 python -m nakedagent "explain what this repo does"   # one-shot
 ```
 
+## Shell safety for automation
+
+For one-shot runs and other non-interactive use-cases, the shell tool is denied
+unless explicit shell allowances are provided:
+
+```bash
+python -m nakedagent "run project checks" --allow-shell --shell-allowlist "git status" --shell-allowlist "ls"
+```
+
+`--shell-allowlist` is prefix-based. If you pass `--allow-shell` with an empty
+allowlist, all non-interactive shell commands are blocked.
+
 No `pip install` step. That's not an oversight — `nakedagent/` only imports
 the standard library, so running it in place works.
 
 ## Status
 
-MVP. Single model backend, four tools, no streaming, no plugin system.
+MVP. Single model backend, four foundation tools, no streaming. The plugin
+seam is the one extension surface — see [`DOCTRINE.md`](DOCTRINE.md).
 Went through two independent peer reviews (headless GLM-5.2, and a
 separately-running devin session, both 2026-09-09) before this first push —
 between them they found five real bugs, all fixed with regression tests,

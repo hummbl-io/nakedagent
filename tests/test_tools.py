@@ -1,7 +1,9 @@
 import tempfile
+import json
+import subprocess
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from nakedagent.tools import (
     _split_search_replace,
@@ -54,19 +56,102 @@ class TestTools(unittest.TestCase):
         out = tool_patch("f.py", block, self.workspace)
         self.assertIn("2 locations", out)
 
-    @patch("sys.stdin.isatty", return_value=False)
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
     def test_shell_runs_and_captures_output(self, _mock_isatty):
         # non-interactive path: no confirmation gate, matches -p/piped use
-        out = tool_shell("", "echo hello-nakedagent", self.workspace)
+        out = tool_shell(
+            "", "echo hello-nakedagent", self.workspace,
+            allow_shell=True,
+            shell_allowlist=("echo",),
+        )
         self.assertIn("hello-nakedagent", out)
 
-    @patch("sys.stdin.isatty", return_value=True)
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_requires_allow_flag(self, _mock_isatty):
+        out = tool_shell("", "echo denied", self.workspace)
+        self.assertIn("requires --allow-shell", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_requires_allowlist_match(self, _mock_isatty):
+        out = tool_shell(
+            "",
+            "rm -rf /tmp/forbidden",
+            self.workspace,
+            allow_shell=True,
+            shell_allowlist=("echo",),
+        )
+        self.assertIn("not in --shell-allowlist", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_audit_log_records_blocked_and_allowed_calls(self, _mock_isatty):
+        # A blocked call should still be auditable.
+        blocked = tool_shell(
+            "",
+            "rm -rf /tmp/forbidden",
+            self.workspace,
+            allow_shell=True,
+            shell_allowlist=("ls",),
+        )
+        self.assertIn("blocked", blocked)
+        allowed = tool_shell(
+            "",
+            "echo allowed",
+            self.workspace,
+            allow_shell=True,
+            shell_allowlist=("echo",),
+        )
+        self.assertIn("exit 0", allowed)
+        log = self.workspace / ".nakedagent" / "shell_audit.jsonl"
+        events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertGreaterEqual(len(events), 2)
+        self.assertEqual(events[0]["allowed"], False)
+        self.assertEqual(events[1]["allowed"], True)
+
+    @patch("nakedagent.tools.subprocess.run")
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_passes_timeout(self, _mock_isatty, mock_run):
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout = "ok"
+        proc.stderr = ""
+        mock_run.return_value = proc
+
+        out = tool_shell(
+            "",
+            "echo hi",
+            self.workspace,
+            allow_shell=True,
+            shell_allowlist=("echo",),
+            shell_timeout=3,
+        )
+        self.assertIn("ok", out)
+        called_kwargs = mock_run.call_args.kwargs
+        self.assertEqual(called_kwargs["timeout"], 3)
+
+    @patch("nakedagent.tools.subprocess.run")
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_exposes_configured_timeout_in_error(
+        self, _mock_isatty, mock_run
+    ):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="echo hi", timeout=7)
+
+        out = tool_shell(
+            "",
+            "sleep 100",
+            self.workspace,
+            allow_shell=True,
+            shell_allowlist=("sleep",),
+            shell_timeout=7,
+        )
+        self.assertIn("command timed out after 7s", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=True)
     @patch("builtins.input", return_value="n")
     def test_shell_declines_when_user_says_no(self, _mock_input, _mock_isatty):
         out = tool_shell("", "echo should-not-run", self.workspace)
         self.assertIn("declined", out)
 
-    @patch("sys.stdin.isatty", return_value=True)
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=True)
     @patch("builtins.input", side_effect=EOFError)
     def test_shell_fails_safe_on_unreadable_confirmation(self, _mock_input, _mock_isatty):
         # isatty() can lie (true but not actually readable, as happens in

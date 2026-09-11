@@ -41,10 +41,30 @@ def chat(messages: list[dict[str, str]], model: str, host: str = DEFAULT_HOST) -
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        # Ollama was reached but returned a non-2xx (e.g. model not found,
+        # 500). HTTPError is a URLError subclass, so without this earlier
+        # branch it would be misreported as "could not reach Ollama" --
+        # misleading, since the server answered. Read the body for a hint.
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        raise OllamaError(
+            f"Ollama at {host} returned HTTP {e.code} {e.reason}"
+            + (f": {detail}" if detail else "")
+        ) from e
     except urllib.error.URLError as e:
         raise OllamaError(
             f"could not reach Ollama at {host} ({e}). Is `ollama serve` running?"
         ) from e
+    except json.JSONDecodeError as e:
+        # a 200 with a non-JSON body (proxy error page, truncated response)
+        # is not a URLError subclass -- without this it escaped chat() as a
+        # raw traceback (same crash class as the tool-exception finding, at
+        # the llm layer).
+        raise OllamaError(f"Ollama at {host} returned a non-JSON response: {e}") from e
 
     try:
         return data["message"]["content"]
