@@ -12,4 +12,4 @@ You will receive a response within 48 hours. If the vulnerability is confirmed, 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
