@@ -29,8 +29,10 @@ def chat(messages: list[dict[str, str]], model: str, host: str = DEFAULT_HOST) -
         # review, P2.7).
         raise OllamaError(f"--host must be an http:// or https:// URL, got: {host!r}")
 
+    # think=False: thinking-capable models (qwen3.x) otherwise spend the reply
+    # in hidden reasoning and return empty `content` to the loop.
     body = json.dumps(
-        {"model": model, "messages": messages, "stream": False}
+        {"model": model, "messages": messages, "stream": False, "think": False}
     ).encode("utf-8")
     req = urllib.request.Request(
         f"{host}/api/chat",
