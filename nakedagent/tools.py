@@ -9,6 +9,7 @@ own mistakes rather than the loop just dying.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -20,15 +21,33 @@ MAX_OUTPUT = 8000  # chars; keeps one runaway command from blowing the context
 
 
 def _is_allowed_shell_command(cmd: str, allowlist: tuple[str, ...]) -> bool:
-    """Return True when `cmd` matches any allowlist entry exactly or by prefix."""
+    """Return True when `cmd` matches any allowlist entry by argv prefix.
+
+    Both the command and each allowlist pattern are parsed with shlex so that
+    shell metacharacters (;, &&, $(), |) cannot hijack a prefix match. For
+    example, ``git status; rm -rf /`` parses to argv ``["git", "status;",
+    "rm", "-rf", "/"]`` — the second token is ``"status;"`` not ``"status"``,
+    so it does not match the ``"git status"`` pattern.
+    """
     if not allowlist:
         return False
-    normalized = cmd.strip()
+    try:
+        cmd_argv = shlex.split(cmd.strip())
+    except ValueError:
+        return False
+    if not cmd_argv:
+        return False
     for pattern in allowlist:
         item = pattern.strip()
         if not item:
             continue
-        if normalized == item or normalized.startswith(item + " "):
+        try:
+            pat_argv = shlex.split(item)
+        except ValueError:
+            continue
+        if not pat_argv:
+            continue
+        if len(cmd_argv) >= len(pat_argv) and cmd_argv[: len(pat_argv)] == pat_argv:
             return True
     return False
 
@@ -143,16 +162,38 @@ def tool_shell(
             )
             return "Error: user declined to run this command."
     try:
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=shell_timeout,
-            stdin=subprocess.DEVNULL,  # a command that tries to read stdin
-            # would otherwise hang instead of failing fast (devin review, P3.8)
-        )
+        if is_tty:
+            # Interactive: user confirmed the full command string.
+            proc = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=shell_timeout,
+                stdin=subprocess.DEVNULL,  # a command that tries to read stdin
+                # would otherwise hang instead of failing fast (devin review, P3.8)
+            )
+        else:
+            # Non-interactive: parse to argv and run without a shell so that
+            # metacharacters (;, &&, $(), |) are literal args, not commands.
+            try:
+                argv = shlex.split(cmd)
+            except ValueError as exc:
+                _log_shell_event(
+                    workspace, cmd, allowed=False, tty=False,
+                    reason=f"shlex parse failure: {exc}",
+                )
+                return f"Error: malformed command ({exc})."
+            proc = subprocess.run(
+                argv,
+                shell=False,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=shell_timeout,
+                stdin=subprocess.DEVNULL,
+            )
     except subprocess.TimeoutExpired:
         _log_shell_event(
             workspace,

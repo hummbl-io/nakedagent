@@ -159,6 +159,87 @@ class TestTools(unittest.TestCase):
         out = tool_shell("", "echo should-not-run", self.workspace)
         self.assertIn("Error", out)
 
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_blocks_semicolon_injection(self, _mock_isatty):
+        # "git status; rm -rf /" must not match allowlist "git status"
+        out = tool_shell(
+            "", "echo hi; echo injected", self.workspace,
+            allow_shell=True, shell_allowlist=("echo hi",),
+        )
+        self.assertIn("not in --shell-allowlist", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_blocks_command_substitution(self, _mock_isatty):
+        out = tool_shell(
+            "", "echo $(echo injected)", self.workspace,
+            allow_shell=True, shell_allowlist=("echo",),
+        )
+        # With shell=False, $(echo injected) is a literal arg — no injection.
+        # But the allowlist matches "echo" so it runs; the arg is literal.
+        self.assertIn("exit 0", out)
+        self.assertIn("$(echo injected)", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_pipe_is_literal_with_shell_false(self, _mock_isatty):
+        # "echo hi | cat" matches allowlist "echo hi" by argv prefix, but
+        # with shell=False the pipe is a literal arg — no pipe injection.
+        out = tool_shell(
+            "", "echo hi | cat", self.workspace,
+            allow_shell=True, shell_allowlist=("echo hi",),
+        )
+        self.assertIn("hi | cat", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_and_chain_is_literal_with_shell_false(self, _mock_isatty):
+        # "echo hi && echo injected" matches "echo hi" by argv prefix, but
+        # with shell=False "&&" is a literal arg — the second echo never runs.
+        out = tool_shell(
+            "", "echo hi && echo injected", self.workspace,
+            allow_shell=True, shell_allowlist=("echo hi",),
+        )
+        # echo outputs "hi && echo injected" as a literal string — the &&
+        # did not chain a second command.
+        self.assertIn("hi && echo injected", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_allowlist_matches_argv_prefix(self, _mock_isatty):
+        # "git status --short" should match allowlist "git status"
+        out = tool_shell(
+            "", "echo hello world", self.workspace,
+            allow_shell=True, shell_allowlist=("echo",),
+        )
+        self.assertIn("hello world", out)
+
+    @patch("nakedagent.tools.subprocess.run")
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
+    def test_shell_noninteractive_uses_shell_false(self, _mock_isatty, mock_run):
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout = "ok"
+        proc.stderr = ""
+        mock_run.return_value = proc
+
+        tool_shell(
+            "", "echo hi", self.workspace,
+            allow_shell=True, shell_allowlist=("echo",),
+        )
+        called_kwargs = mock_run.call_args.kwargs
+        self.assertFalse(called_kwargs["shell"])
+
+    @patch("nakedagent.tools.subprocess.run")
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=True)
+    @patch("builtins.input", return_value="y")
+    def test_shell_interactive_uses_shell_true(self, _mock_input, _mock_isatty, mock_run):
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout = "ok"
+        proc.stderr = ""
+        mock_run.return_value = proc
+
+        tool_shell("", "echo hi", self.workspace)
+        called_kwargs = mock_run.call_args.kwargs
+        self.assertTrue(called_kwargs["shell"])
+
     def test_split_search_replace_requires_start_marker(self):
         # GLM-5.2 review finding #2, related defect caught while fixing it:
         # the old implementation defaulted the SEARCH start to line 0 when
