@@ -145,6 +145,8 @@ def main() -> int:
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    # preds.json is a dict keyed by instance_id (makes resume/skip trivial), not
+    # SWE-bench's list-of-predictions format; score_preds.py accepts both.
     preds_path = out / "preds.json"
     preds = json.loads(preds_path.read_text()) if preds_path.exists() else {}
     loop.MAX_STEPS = a.steps

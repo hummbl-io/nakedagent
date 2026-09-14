@@ -44,6 +44,8 @@ def main() -> int:
     a = ap.parse_args()
 
     preds = json.loads(Path(a.preds).read_text(encoding="utf-8"))
+    if isinstance(preds, list):  # standard SWE-bench predictions list
+        preds = {p["instance_id"]: p for p in preds}
     ds = {r["instance_id"]: r for r in load_dataset(a.dataset, split=a.split)}
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
