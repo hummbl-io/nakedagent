@@ -140,7 +140,11 @@ def tool_shell(
     if shell_timeout <= 0:
         return "Error: --shell-timeout must be a positive integer."
 
-    is_tty = sys.stdin.isatty()
+    # An explicit --allow-shell is the operator's consent, so it selects the
+    # allowlist policy even with a TTY on stdin. Otherwise a one-shot run
+    # started from a terminal (a benchmark, a script run by hand) prompted
+    # instead, often could not read an answer, and refused every command.
+    is_tty = sys.stdin.isatty() and not allow_shell
     if not is_tty and not allow_shell:
         reason = "non-interactive shell execution requires --allow-shell"
         _log_shell_event(

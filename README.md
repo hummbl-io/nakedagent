@@ -34,8 +34,10 @@ is no supply.
   `shell` is confirmation-first in interactive mode and requires `--allow-shell`
   in non-interactive mode, with optional command filtering via
   `--shell-allowlist`.
-- **Model backend**: [Ollama](https://ollama.com) only, for now — local-first,
-  no API key required to try it.
+- **Model backend**: [Ollama](https://ollama.com) by default — local-first,
+  no API key required to try it. For models too large to run locally,
+  `--api openai` speaks the OpenAI-compatible format that hosted APIs,
+  vLLM/LM Studio and gateways share (see below).
 - **Tool-call format**: the model writes a fenced code block whose language
   tag is the tool name; nakedagent parses it out of the response text after
   each turn. Works with any model that can write a code fence — no dependency
@@ -60,6 +62,20 @@ cd nakedagent
 ollama pull qwen2.5-coder:7b   # or any model you like
 python -m nakedagent           # interactive
 python -m nakedagent "explain what this repo does"   # one-shot
+```
+
+### Larger models
+
+Small local models get the loop running; bigger models make it good. Point
+nakedagent at any OpenAI-compatible server. The key comes from an
+environment variable (`--api-key-env`, default `OPENAI_API_KEY`), never a flag:
+
+```bash
+# hosted API
+OPENAI_API_KEY=... python -m nakedagent --api openai --host https://api.openai.com/v1 -m <model>
+
+# self-hosted (vLLM, LM Studio) — no key needed
+python -m nakedagent --api openai --host http://localhost:8000/v1 -m <model>
 ```
 
 ## Shell safety for automation

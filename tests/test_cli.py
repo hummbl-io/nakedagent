@@ -43,7 +43,29 @@ class TestCliExitCodes(unittest.TestCase):
             allow_shell=True,
             shell_allowlist=("echo",),
             shell_timeout=3,
+            llm_options={},
         )
+
+    @patch("nakedagent.cli.run")
+    def test_openai_api_passes_backend_options(self, mock_run):
+        self.assertEqual(
+            cli.main([
+                "--api", "openai",
+                "--host", "https://api.example.com/v1",
+                "--api-key-env", "MY_KEY",
+                "-m", "big-model",
+                "do something",
+            ]),
+            0,
+        )
+        args, kwargs = mock_run.call_args
+        self.assertEqual(args[3], "https://api.example.com/v1")
+        self.assertEqual(kwargs["llm_options"], {"api": "openai", "api_key_env": "MY_KEY"})
+
+    @patch("nakedagent.cli.run")
+    def test_openai_api_requires_host(self, mock_run):
+        self.assertEqual(cli.main(["--api", "openai", "do something"]), 1)
+        mock_run.assert_not_called()
 
     @patch("nakedagent.cli.run")
     def test_oneshot_rejects_non_positive_shell_timeout(self, mock_run):

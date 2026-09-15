@@ -113,6 +113,7 @@ def _build_tools(
 def step(
     messages: list[dict[str, str]], model: str, workspace: Path, host: str = DEFAULT_HOST,
     tools: dict | None = None,
+    llm_options: dict | None = None,
 ) -> bool:
     """One model call + execute any tool calls in its reply.
 
@@ -123,9 +124,12 @@ def step(
     `tools` is the tool registry to dispatch against; defaulting to the
     foundation TOOLS keeps the existing call sites working. Callers that
     want plugins pass the merged registry from load_plugins().
+
+    `llm_options` is passed to llm.chat as keywords (`api`, `api_key_env`);
+    empty means the Ollama default.
     """
     registry = tools if tools is not None else TOOLS
-    reply = llm.chat(messages, model, host)
+    reply = llm.chat(messages, model, host, **(llm_options or {}))
     messages.append({"role": "assistant", "content": reply})
     print(f"\n{_dim('--- assistant ---')}\n{reply}")
 
@@ -159,10 +163,11 @@ def step(
 def _run_until_done(
     messages: list[dict[str, str]], model: str, workspace: Path, host: str,
     tools: dict | None = None,
+    llm_options: dict | None = None,
 ) -> None:
     """Call step() while it keeps returning True, capped at MAX_STEPS."""
     for _ in range(MAX_STEPS):
-        if not step(messages, model, workspace, host, tools=tools):
+        if not step(messages, model, workspace, host, tools=tools, llm_options=llm_options):
             return
     print(_warn(f"\n--- stopped after {MAX_STEPS} tool-call rounds; your turn ---"))
 
@@ -176,6 +181,7 @@ def run(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    llm_options: dict | None = None,
 ) -> None:
     """One-shot: run `prompt` to completion (no further human input)."""
     tools = _build_tools(
@@ -188,7 +194,7 @@ def run(
         {"role": "system", "content": _system_prompt(tools)},
         {"role": "user", "content": prompt},
     ]
-    _run_until_done(messages, model, workspace, host, tools=tools)
+    _run_until_done(messages, model, workspace, host, tools=tools, llm_options=llm_options)
 
 
 def run_interactive(
@@ -199,6 +205,7 @@ def run_interactive(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    llm_options: dict | None = None,
 ) -> None:
     """REPL: prompt the user for input whenever the agent has no tool calls left."""
     tools = _build_tools(
@@ -219,4 +226,4 @@ def run_interactive(
         if not user_input.strip():
             continue
         messages.append({"role": "user", "content": user_input})
-        _run_until_done(messages, model, workspace, host, tools=tools)
+        _run_until_done(messages, model, workspace, host, tools=tools, llm_options=llm_options)
