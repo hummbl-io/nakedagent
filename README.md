@@ -74,10 +74,6 @@ environment variable (`--api-key-env`, default `OPENAI_API_KEY`), never a flag:
 # hosted API
 OPENAI_API_KEY=... python -m nakedagent --api openai --host https://api.openai.com/v1 -m <model>
 
-# Gemini through its OpenAI-compatible endpoint
-python -m nakedagent --api openai --api-key-env GEMINI_API_KEY \
-  --host https://generativelanguage.googleapis.com/v1beta/openai -m gemini-2.5-flash
-
 # self-hosted (vLLM, LM Studio) — no key needed
 python -m nakedagent --api openai --host http://localhost:8000/v1 -m <model>
 ```
