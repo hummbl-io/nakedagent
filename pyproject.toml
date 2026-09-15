@@ -15,7 +15,8 @@ dependencies = []
 nakedagent = "nakedagent.cli:main"
 
 [project.urls]
-Repository = "https://github.com/hummbl-dev/nakedagent"
+Repository = "https://github.com/hummbl-io/nakedagent"
+Homepage = "https://github.com/hummbl-io/nakedagent"
 
 [tool.setuptools.packages.find]
 include = ["nakedagent*"]

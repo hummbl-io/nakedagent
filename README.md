@@ -55,7 +55,7 @@ actual source before writing this.
 ## Quick start
 
 ```bash
-git clone https://github.com/hummbl-dev/nakedagent.git
+git clone https://github.com/hummbl-io/nakedagent.git
 cd nakedagent
 ollama pull qwen2.5-coder:7b   # or any model you like
 python -m nakedagent           # interactive

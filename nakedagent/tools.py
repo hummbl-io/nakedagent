@@ -9,6 +9,9 @@ own mistakes rather than the loop just dying.
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,17 +21,57 @@ ToolFunc = Callable[[str, str, Path], str]
 
 MAX_OUTPUT = 8000  # chars; keeps one runaway command from blowing the context
 
+# Characters cmd.exe interprets. Windows runs .bat/.cmd files through cmd.exe
+# even with shell=False, so these in arguments would reopen injection.
+_CMD_METACHARS = set('&|<>^%!"')
+
+
+def _split_command(cmd: str) -> list[str]:
+    """Split a command string into argv, platform-aware.
+
+    POSIX shlex rules treat backslash as an escape, which mangles Windows
+    paths (C:\\tools\\git.exe -> C:toolsgit.exe). On Windows, split with
+    posix=False and strip one layer of surrounding quotes per token instead.
+    Raises ValueError on unbalanced quotes, like shlex.split.
+    """
+    if os.name != "nt":
+        return shlex.split(cmd)
+    argv = []
+    for tok in shlex.split(cmd, posix=False):
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+            tok = tok[1:-1]
+        argv.append(tok)
+    return argv
+
 
 def _is_allowed_shell_command(cmd: str, allowlist: tuple[str, ...]) -> bool:
-    """Return True when `cmd` matches any allowlist entry exactly or by prefix."""
+    """Return True when `cmd` matches any allowlist entry by argv prefix.
+
+    Both the command and each allowlist pattern are parsed with shlex so that
+    shell metacharacters (;, &&, $(), |) cannot hijack a prefix match. For
+    example, ``git status; rm -rf /`` parses to argv ``["git", "status;",
+    "rm", "-rf", "/"]`` — the second token is ``"status;"`` not ``"status"``,
+    so it does not match the ``"git status"`` pattern.
+    """
     if not allowlist:
         return False
-    normalized = cmd.strip()
+    try:
+        cmd_argv = _split_command(cmd.strip())
+    except ValueError:
+        return False
+    if not cmd_argv:
+        return False
     for pattern in allowlist:
         item = pattern.strip()
         if not item:
             continue
-        if normalized == item or normalized.startswith(item + " "):
+        try:
+            pat_argv = _split_command(item)
+        except ValueError:
+            continue
+        if not pat_argv:
+            continue
+        if len(cmd_argv) >= len(pat_argv) and cmd_argv[: len(pat_argv)] == pat_argv:
             return True
     return False
 
@@ -143,16 +186,63 @@ def tool_shell(
             )
             return "Error: user declined to run this command."
     try:
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=shell_timeout,
-            stdin=subprocess.DEVNULL,  # a command that tries to read stdin
-            # would otherwise hang instead of failing fast (devin review, P3.8)
-        )
+        if is_tty:
+            # Interactive: user confirmed the full command string.
+            proc = subprocess.run(
+                cmd,
+                shell=True,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=shell_timeout,
+                stdin=subprocess.DEVNULL,  # a command that tries to read stdin
+                # would otherwise hang instead of failing fast (devin review, P3.8)
+            )
+        else:
+            # Non-interactive: parse to argv and run without a shell so that
+            # metacharacters (;, &&, $(), |) are literal args, not commands.
+            try:
+                argv = _split_command(cmd)
+            except ValueError as exc:
+                _log_shell_event(
+                    workspace, cmd, allowed=False, tty=False,
+                    reason=f"shlex parse failure: {exc}",
+                )
+                return f"Error: malformed command ({exc})."
+            # Resolve the program explicitly: without a shell, built-ins such as
+            # cmd.exe's `echo`/`dir` do not exist, and a bare FileNotFoundError
+            # tells the model nothing useful.
+            exe = shutil.which(argv[0], path=os.environ.get("PATH")) if argv else None
+            if exe is None:
+                reason = f"not an executable on PATH: {argv[0] if argv else ''}"
+                _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
+                return (
+                    f"Error: '{argv[0] if argv else ''}' is not an executable on PATH. "
+                    "Non-interactive mode runs programs directly without a shell, so "
+                    "shell built-ins (e.g. cmd's echo/dir) and operators (|, &&, ;) "
+                    "are not available."
+                )
+            if (
+                os.name == "nt"
+                and exe.lower().endswith((".bat", ".cmd"))
+                and any(ch in _CMD_METACHARS for arg in argv[1:] for ch in arg)
+            ):
+                reason = "cmd.exe metacharacters in arguments to a batch file"
+                _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
+                return (
+                    f"Error: shell execution blocked ({reason}); Windows runs "
+                    ".bat/.cmd files through cmd.exe, which would interpret them."
+                )
+            argv[0] = exe
+            proc = subprocess.run(
+                argv,
+                shell=False,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=shell_timeout,
+                stdin=subprocess.DEVNULL,
+            )
     except subprocess.TimeoutExpired:
         _log_shell_event(
             workspace,
