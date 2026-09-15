@@ -8,10 +8,15 @@ import urllib.parse
 import urllib.request
 
 DEFAULT_HOST = "http://localhost:11434"
+APIS = ("ollama", "openai")
+DEFAULT_API_KEY_ENV = ""
 
 
 class OllamaError(RuntimeError):
     pass
+
+
+LLMError = OllamaError
 
 
 def chat(messages: list[dict[str, str]], model: str, host: str = DEFAULT_HOST) -> str:
