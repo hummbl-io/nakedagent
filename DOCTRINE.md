@@ -23,7 +23,9 @@ better?" is a question the default lets you ask.
 ## The foundation stays naked
 
 The foundation is four tools (`shell`, `read`, `write`, `patch`), one model
-backend (Ollama), and the standard library. Nothing else. This is not
+call with two wire formats (Ollama by default, plus the OpenAI-compatible
+shape for models too large to run locally), and the standard library.
+Nothing else. This is not
 minimalism for its own sake — it is the load-bearing constraint that gives
 the project its reason to exist: no supply chain, because there is no
 supply. `urllib` + `json` + `subprocess` + `re` are enough to drive a local
