@@ -20,12 +20,15 @@ class TestPluginLoad(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self._tmp.name)
-        # Isolate from user-global plugins (~/.nakedagent/plugins/)
-        self._home_patch = patch("nakedagent.plugins.Path.home", return_value=self.workspace)
+        # Isolate from the developer's real ~/.nakedagent/plugins/: an installed
+        # user-global plugin otherwise leaks into every assertion here.
+        self._home = tempfile.TemporaryDirectory()
+        self._home_patch = patch.object(Path, "home", return_value=Path(self._home.name))
         self._home_patch.start()
 
     def tearDown(self):
         self._home_patch.stop()
+        self._home.cleanup()
         self._tmp.cleanup()
 
     def test_no_plugin_dirs_returns_foundation_unchanged(self):
@@ -109,11 +112,15 @@ class TestPluginDisable(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self._tmp.name)
-        self._home_patch = patch("nakedagent.plugins.Path.home", return_value=self.workspace)
+        # Isolate from the developer's real ~/.nakedagent/plugins/: an installed
+        # user-global plugin otherwise leaks into every assertion here.
+        self._home = tempfile.TemporaryDirectory()
+        self._home_patch = patch.object(Path, "home", return_value=Path(self._home.name))
         self._home_patch.start()
 
     def tearDown(self):
         self._home_patch.stop()
+        self._home.cleanup()
         self._tmp.cleanup()
 
     def test_disable_removes_foundation_tool(self):
