@@ -23,11 +23,13 @@ class TestStep(unittest.TestCase):
     @patch("sys.stdin.isatty", return_value=False)
     @patch("nakedagent.loop.llm.chat")
     def test_simple_tool_call_runs_and_returns_true(self, mock_chat, _mock_isatty):
-        mock_chat.return_value = "```shell\necho hi\n```"
-        messages = [{"role": "user", "content": "run echo hi"}]
+        # python, not echo: non-interactive shell runs programs directly, and on
+        # Windows echo is a cmd.exe built-in rather than an executable.
+        mock_chat.return_value = "```shell\npython -c \"print('hi')\"\n```"
+        messages = [{"role": "user", "content": "run a command"}]
         tools = dict(TOOLS)
         tools["shell"] = partial(
-            tool_shell, allow_shell=True, shell_allowlist=("echo",)
+            tool_shell, allow_shell=True, shell_allowlist=("python",)
         )
         ran_again = step(messages, "fake-model", self.workspace, tools=tools)
         self.assertTrue(ran_again)
@@ -91,11 +93,11 @@ class TestStep(unittest.TestCase):
         # language tag). Without case-normalization at the lookup this became
         # "unknown tool 'SHELL'" and the command never ran -- a silent
         # capability gap, not a crash.
-        mock_chat.return_value = "```SHELL\necho upper-works\n```"
+        mock_chat.return_value = "```SHELL\npython -c \"print('upper-works')\"\n```"
         messages = [{"role": "user", "content": "run it"}]
         tools = dict(TOOLS)
         tools["shell"] = partial(
-            tool_shell, allow_shell=True, shell_allowlist=("echo",)
+            tool_shell, allow_shell=True, shell_allowlist=("python",)
         )
         ran_again = step(messages, "fake-model", self.workspace, tools=tools)
         self.assertTrue(ran_again)
