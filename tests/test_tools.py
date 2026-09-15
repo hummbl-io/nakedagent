@@ -92,6 +92,28 @@ class TestTools(unittest.TestCase):
         )
         self.assertIn("not in --shell-allowlist", out)
 
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=True)
+    @patch("builtins.input", side_effect=AssertionError("must not prompt"))
+    def test_allow_shell_uses_allowlist_even_with_tty(self, _mock_input, _mock_isatty):
+        # A one-shot run started from a terminal has a TTY on stdin. The
+        # explicit --allow-shell must still apply the allowlist and never
+        # prompt; before this fix every command was refused with "could not
+        # read a confirmation" (found by a live benchmark).
+        out = tool_shell(
+            "", f"{self.echo} ran", self.workspace,
+            allow_shell=True, shell_allowlist=(self.echo,),
+        )
+        self.assertIn("exit 0", out)
+
+    @patch("nakedagent.tools.sys.stdin.isatty", return_value=True)
+    @patch("builtins.input", side_effect=AssertionError("must not prompt"))
+    def test_allow_shell_with_tty_still_enforces_allowlist(self, _mock_input, _mock_isatty):
+        out = tool_shell(
+            "", "rm -rf /tmp/forbidden", self.workspace,
+            allow_shell=True, shell_allowlist=(self.echo,),
+        )
+        self.assertIn("not in --shell-allowlist", out)
+
     @patch("nakedagent.tools.sys.stdin.isatty", return_value=False)
     def test_shell_audit_log_records_blocked_and_allowed_calls(self, _mock_isatty):
         # A blocked call should still be auditable.
