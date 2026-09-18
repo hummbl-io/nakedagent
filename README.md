@@ -50,7 +50,7 @@ is no supply.
   replaces its syntax too. No registration, no framework — see
   [`DOCTRINE.md`](DOCTRINE.md) for the omakase framing.
 
-See [`docs/architecture.md`](docs/architecture.md) for how the loop and tool
+See [`docs/architecture/architecture.md`](docs/architecture/architecture.md) for how the loop and tool
 parser work, including what was learned from reading gptme's and aider's
 actual source before writing this.
 
@@ -100,7 +100,7 @@ seam is the one extension surface — see [`DOCTRINE.md`](DOCTRINE.md).
 Went through two independent peer reviews (headless GLM-5.2, and a
 separately-running devin session, both 2026-09-09) before this first push —
 between them they found five real bugs, all fixed with regression tests,
-documented in [`docs/architecture.md`](docs/architecture.md) alongside what's
+documented in [`docs/architecture/architecture.md`](docs/architecture/architecture.md) alongside what's
 still genuinely not here and why.
 
 ## License
