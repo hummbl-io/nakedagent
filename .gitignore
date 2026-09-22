@@ -5,3 +5,6 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# nakedagent runtime state (audit logs, workspace plugins) -- never commit
+.nakedagent/

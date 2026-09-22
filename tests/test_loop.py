@@ -1,11 +1,24 @@
+import sys
 import tempfile
 import unittest
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 from unittest.mock import patch
 
-from nakedagent.loop import MAX_STEPS, _run_until_done, _system_prompt, step, SYSTEM_PROMPT
+from nakedagent.loop import (
+    MAX_STEPS,
+    SYSTEM_PROMPT,
+    _build_tools,
+    _run_until_done,
+    _system_prompt,
+    step,
+)
 from nakedagent.tools import TOOLS, tool_shell
+
+# Hosts where only `python3` exists (and Windows, where `python` may be the
+# Store shim) broke these tests even though the product was fine. Always run
+# the current interpreter (issue #10).
+PYEXE = f'"{sys.executable}"'
 
 
 class TestStep(unittest.TestCase):
@@ -23,13 +36,14 @@ class TestStep(unittest.TestCase):
     @patch("sys.stdin.isatty", return_value=False)
     @patch("nakedagent.loop.llm.chat")
     def test_simple_tool_call_runs_and_returns_true(self, mock_chat, _mock_isatty):
-        # python, not echo: non-interactive shell runs programs directly, and on
-        # Windows echo is a cmd.exe built-in rather than an executable.
-        mock_chat.return_value = "```shell\npython -c \"print('hi')\"\n```"
+        # sys.executable, not echo: non-interactive shell runs programs
+        # directly, and on Windows echo is a cmd.exe built-in rather than an
+        # executable.
+        mock_chat.return_value = f"```shell\n{PYEXE} -c \"print('hi')\"\n```"
         messages = [{"role": "user", "content": "run a command"}]
         tools = dict(TOOLS)
         tools["shell"] = partial(
-            tool_shell, allow_shell=True, shell_allowlist=("python",)
+            tool_shell, allow_shell=True, shell_allowlist=(PYEXE,)
         )
         ran_again = step(messages, "fake-model", self.workspace, tools=tools)
         self.assertTrue(ran_again)
@@ -93,11 +107,11 @@ class TestStep(unittest.TestCase):
         # language tag). Without case-normalization at the lookup this became
         # "unknown tool 'SHELL'" and the command never ran -- a silent
         # capability gap, not a crash.
-        mock_chat.return_value = "```SHELL\npython -c \"print('upper-works')\"\n```"
+        mock_chat.return_value = f"```SHELL\n{PYEXE} -c \"print('upper-works')\"\n```"
         messages = [{"role": "user", "content": "run it"}]
         tools = dict(TOOLS)
         tools["shell"] = partial(
-            tool_shell, allow_shell=True, shell_allowlist=("python",)
+            tool_shell, allow_shell=True, shell_allowlist=(PYEXE,)
         )
         ran_again = step(messages, "fake-model", self.workspace, tools=tools)
         self.assertTrue(ran_again)
@@ -118,12 +132,12 @@ class TestStep(unittest.TestCase):
         # A model stuck always emitting another tool call must not loop
         # forever -- _run_until_done is where the cap actually lives.
         mock_chat.return_value = (
-            "```shell\npython -c \"import sys; sys.exit(0)\"\n```"  # always another call
+            f"```shell\n{PYEXE} -c \"import sys; sys.exit(0)\"\n```"  # always another call
         )
         messages = [{"role": "user", "content": "loop forever"}]
         tools = dict(TOOLS)
         tools["shell"] = partial(
-            tool_shell, allow_shell=True, shell_allowlist=("python",)
+            tool_shell, allow_shell=True, shell_allowlist=(PYEXE,)
         )
         _run_until_done(messages, "fake-model", self.workspace, "http://unused", tools=tools)
         self.assertEqual(mock_chat.call_count, MAX_STEPS)
@@ -174,6 +188,57 @@ class TestSystemPrompt(unittest.TestCase):
         prompt = _system_prompt(tools)
         self.assertNotIn("```shell", prompt)
         self.assertIn("```read", prompt)  # others still present
+
+
+class TestBuildTools(unittest.TestCase):
+    """_build_tools is what real sessions actually run -- the prompt test above
+    never exercised it, which is how the partial/.usage bug shipped."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name)
+        # isolate from a real ~/.nakedagent/plugins/ on the dev machine
+        self._home = tempfile.TemporaryDirectory()
+        self._home_patch = patch.object(Path, "home", return_value=Path(self._home.name))
+        self._home_patch.start()
+
+    def tearDown(self):
+        self._home_patch.stop()
+        self._home.cleanup()
+        self._tmp.cleanup()
+
+    def test_wrapped_shell_keeps_usage_in_prompt(self):
+        # Regression for issue #6: functools.partial drops function
+        # attributes, so the wrapped shell lost .usage and the live prompt
+        # demoted shell to the name-only "Additional tools" list.
+        tools = _build_tools(self.workspace)
+        self.assertIsInstance(tools["shell"], partial)
+        self.assertEqual(tools["shell"].usage, tool_shell.usage)
+        prompt = _system_prompt(tools)
+        self.assertIn("```shell", prompt)
+        self.assertNotIn("`shell`.", prompt)  # not demoted to name-only
+
+    @patch("nakedagent.loop.llm.chat")
+    def test_step_passes_llm_options_to_chat(self, mock_chat):
+        # Regression for issue #10's dead path: llm_options must reach
+        # llm.chat as kwargs (api, api_key_env) without a TypeError -- the
+        # CLI tests mock run(), so nothing upstream covered this.
+        mock_chat.return_value = "ok"
+        messages = [{"role": "user", "content": "hi"}]
+        step(
+            messages,
+            "fake-model",
+            self.workspace,
+            "https://api.example.com/v1",
+            llm_options={"api": "openai", "api_key_env": "SOME_KEY"},
+        )
+        mock_chat.assert_called_once_with(
+            messages,
+            "fake-model",
+            "https://api.example.com/v1",
+            api="openai",
+            api_key_env="SOME_KEY",
+        )
 
 
 if __name__ == "__main__":

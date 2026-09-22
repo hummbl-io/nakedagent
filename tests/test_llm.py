@@ -1,8 +1,10 @@
+import json
+import os
 import unittest
 import urllib.error
 from unittest.mock import patch
 
-from nakedagent.llm import OllamaError, chat
+from nakedagent.llm import LLMError, OllamaError, chat
 
 
 class TestHostValidation(unittest.TestCase):
@@ -69,6 +71,60 @@ class TestThinkingDisabled(unittest.TestCase):
         self.assertEqual(chat([], "model", host="http://localhost:11434"), "ok")
         sent = json.loads(mock_urlopen.call_args[0][0].data)
         self.assertIs(sent["think"], False)
+
+
+class TestOpenAICompatible(unittest.TestCase):
+    """Regression for issue #5: the squash-merge of #1 reverted #4 and left
+    cli.py passing `api=`/`api_key_env=` kwargs into a chat() that didn't
+    accept them (TypeError on `--api openai`). These tests pin the restored
+    wire format."""
+
+    @patch("urllib.request.urlopen")
+    def test_openai_request_shape_and_response_parse(self, mock_urlopen):
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"choices": [{"message": {"content": "ok"}}]}'
+        )
+        out = chat(
+            [],
+            "gpt-x",
+            host="https://api.example.com/v1",
+            api="openai",
+            api_key_env="NAKEDAGENT_TEST_KEY",
+        )
+        self.assertEqual(out, "ok")
+        req = mock_urlopen.call_args[0][0]
+        self.assertTrue(req.full_url.endswith("/chat/completions"))
+        sent = json.loads(req.data)
+        self.assertNotIn("think", sent)  # think=false is Ollama-only
+
+    @patch("urllib.request.urlopen")
+    def test_openai_sends_bearer_from_named_env(self, mock_urlopen):
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"choices": [{"message": {"content": "ok"}}]}'
+        )
+        with patch.dict(os.environ, {"NAKEDAGENT_TEST_KEY": "sekrit"}):
+            chat([], "m", host="https://api.example.com/v1", api="openai",
+                 api_key_env="NAKEDAGENT_TEST_KEY")
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(req.get_header("Authorization"), "Bearer sekrit")
+
+    @patch("urllib.request.urlopen")
+    def test_openai_401_names_the_key_var(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="x", code=401, msg="Unauthorized", hdrs=None, fp=None
+        )
+        with self.assertRaises(LLMError) as ctx:
+            chat([], "m", host="https://api.example.com/v1", api="openai",
+                 api_key_env="MY_KEY_VAR")
+        self.assertIn("MY_KEY_VAR", str(ctx.exception))
+
+    @patch("urllib.request.urlopen")
+    def test_openai_null_content_returns_empty_string(self, mock_urlopen):
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"choices": [{"message": {"content": null}}]}'
+        )
+        out = chat([], "m", host="https://api.example.com/v1", api="openai")
+        self.assertEqual(out, "")
 
 
 if __name__ == "__main__":
