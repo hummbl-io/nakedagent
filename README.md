@@ -42,13 +42,16 @@ is no supply.
   tag is the tool name; nakedagent parses it out of the response text after
   each turn. Works with any model that can write a code fence — no dependency
   on a provider's native function-calling API.
-- **Plugins**: drop a `.py` file in `.nakedagent/plugins/` (repo-local) or
-  `~/.nakedagent/plugins/` (user-global) that defines a `TOOLS` dict (add or
+- **Plugins**: drop a `.py` file in `.nakedagent/plugins/` (repo-local,
+  requires `--trust-workspace-plugins`) or `~/.nakedagent/plugins/`
+  (user-global, always loaded) that defines a `TOOLS` dict (add or
   override tools) and/or a `DISABLE` list (remove tools entirely — e.g. a
   read-only agent disables `shell` and `write`). Each tool carries a `.usage`
   attribute that controls its prompt example, so a plugin replacing a tool
   replaces its syntax too. No registration, no framework — see
-  [`DOCTRINE.md`](DOCTRINE.md) for the omakase framing.
+  [`DOCTRINE.md`](DOCTRINE.md) for the omakase framing. Repo-local plugins
+  are off by default because they execute with your privileges — only pass
+  the flag in workspaces you trust.
 
 See [`docs/architecture/architecture.md`](docs/architecture/architecture.md) for how the loop and tool
 parser work, including what was learned from reading gptme's and aider's
@@ -95,7 +98,8 @@ the standard library, so running it in place works.
 
 ## Status
 
-MVP. Single model backend, four foundation tools, no streaming. The plugin
+MVP. Two wire formats (Ollama native + OpenAI-compatible), four foundation
+tools, no streaming. The plugin
 seam is the one extension surface — see [`DOCTRINE.md`](DOCTRINE.md).
 Went through two independent peer reviews (headless GLM-5.2, and a
 separately-running devin session, both 2026-09-09) before this first push —

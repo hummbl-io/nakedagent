@@ -44,7 +44,17 @@ class TestCliExitCodes(unittest.TestCase):
             shell_allowlist=("echo",),
             shell_timeout=3,
             llm_options={},
+            trust_workspace_plugins=False,
         )
+
+    @patch("nakedagent.cli.run")
+    def test_trust_workspace_plugins_flag_passes_through(self, mock_run):
+        self.assertEqual(
+            cli.main(["--trust-workspace-plugins", "do something"]),
+            0,
+        )
+        _, kwargs = mock_run.call_args
+        self.assertTrue(kwargs["trust_workspace_plugins"])
 
     @patch("nakedagent.cli.run")
     def test_openai_api_passes_backend_options(self, mock_run):

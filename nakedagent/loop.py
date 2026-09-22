@@ -10,15 +10,15 @@ contains a tool call.
 
 from __future__ import annotations
 
-from functools import partial
 import sys
+from functools import partial
 from pathlib import Path
 
 from . import llm
 from .llm import DEFAULT_HOST
+from .plugins import load_plugins
 from .toolcall import parse
 from .tools import TOOLS, tool_shell
-from .plugins import load_plugins
 
 MAX_STEPS = 25  # tool-call rounds per human turn, before handing back control
 
@@ -92,6 +92,7 @@ def _build_tools(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_workspace_plugins: bool = False,
 ) -> dict:
     """Load plugin tools and apply shell-policy hardening.
 
@@ -99,14 +100,19 @@ def _build_tools(
     explicit non-interactive allow-switching and allowlist checks to close the
     trust gap in automation.
     """
-    tools = load_plugins(workspace)
+    tools = load_plugins(workspace, trust_workspace=trust_workspace_plugins)
     if tools.get("shell") is tool_shell:
-        tools["shell"] = partial(
+        wrapped = partial(
             tool_shell,
             allow_shell=allow_shell,
             shell_allowlist=shell_allowlist,
             shell_timeout=shell_timeout,
         )
+        # functools.partial drops function attributes; copy .usage so the
+        # system prompt keeps the shell fenced-block example instead of
+        # demoting shell to the name-only "Additional tools" list.
+        wrapped.usage = tool_shell.usage
+        tools["shell"] = wrapped
     return tools
 
 
@@ -182,6 +188,7 @@ def run(
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
     llm_options: dict | None = None,
+    trust_workspace_plugins: bool = False,
 ) -> None:
     """One-shot: run `prompt` to completion (no further human input)."""
     tools = _build_tools(
@@ -189,6 +196,7 @@ def run(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_workspace_plugins=trust_workspace_plugins,
     )
     messages = [
         {"role": "system", "content": _system_prompt(tools)},
@@ -206,6 +214,7 @@ def run_interactive(
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
     llm_options: dict | None = None,
+    trust_workspace_plugins: bool = False,
 ) -> None:
     """REPL: prompt the user for input whenever the agent has no tool calls left."""
     tools = _build_tools(
@@ -213,6 +222,7 @@ def run_interactive(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_workspace_plugins=trust_workspace_plugins,
     )
     messages = [{"role": "system", "content": _system_prompt(tools)}]
     print(f"nakedagent -- workspace: {workspace} -- model: {model}")

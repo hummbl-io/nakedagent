@@ -1,3 +1,5 @@
+"""nakedagent -- a zero-dependency terminal coding agent."""
+
 from __future__ import annotations
 
 import argparse
@@ -59,6 +61,16 @@ def main(argv: list[str] | None = None) -> int:
         default=120,
         help="Timeout in seconds for shell tool execution.",
     )
+    p.add_argument(
+        "--trust-workspace-plugins",
+        action="store_true",
+        help=(
+            "Load <workspace>/.nakedagent/plugins/*.py at startup. Off by "
+            "default: workspace plugins are repo-controlled code running with "
+            "your privileges. Only set this in workspaces you trust. "
+            "User-global ~/.nakedagent/plugins/ always loads."
+        ),
+    )
     p.add_argument("--version", action="version", version=__version__)
     args = p.parse_args(argv)
 
@@ -91,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
                 llm_options=llm_options,
+                trust_workspace_plugins=args.trust_workspace_plugins,
             )
         else:
             run_interactive(
@@ -101,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
                 llm_options=llm_options,
+                trust_workspace_plugins=args.trust_workspace_plugins,
             )
     except LLMError as e:
         print(f"error: {e}", file=sys.stderr)
