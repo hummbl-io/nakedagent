@@ -390,15 +390,18 @@ TOOLS: dict[str, ToolFunc] = {
 # prompt example too -- the chef's opinion lives on the tool, not in a static
 # string the seam can't reach (DOCTRINE.md, "the seam is the substitution
 # mechanism"). A plugin tool with no `.usage` is listed by name only.
-tool_shell.usage = "```shell\n<a shell command to run>\n```"
-tool_read.usage = "```read <path>\n```"
-tool_write.usage = "```write <path>\n<full file content to write>\n```"
+# Concrete examples, not <placeholders>: models copy <angle-bracket>
+# scaffolding literally into real commands (gemma3 ran `<cmd>`; bash exit 2),
+# the exact failure the SWE-bench Lite pilot hit (issue #12).
+tool_shell.usage = "```shell\nls -la\n```"
+tool_read.usage = "```read README.md\n```"
+tool_write.usage = "```write hello.txt\nHello, world!\n```"
 tool_patch.usage = (
-    "```patch <path>\n"
+    "```patch hello.txt\n"
     "<<<<<<< SEARCH\n"
-    "<exact existing text>\n"
+    "Hello, world!\n"
     "=======\n"
-    "<replacement text>\n"
+    "Goodbye, world!\n"
     ">>>>>>> REPLACE\n"
     "```"
 )
