@@ -38,7 +38,7 @@ def image_name(iid: str) -> str:
 
 def sh(cmd: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          encoding="utf-8", errors="replace")
+                          encoding="utf-8", errors="replace", check=False)
 
 
 def make_shell(container: str, timeout: int = 60):
@@ -98,8 +98,8 @@ def make_container_file_tools(container: str):
         new = p.stdout.replace(search, replace, 1)
         # Binary stdin: text-mode pipes on Windows turn "\n" into "\r\n", which
         # rewrote every line of the file and produced whole-file diffs.
-        w = subprocess.run(["docker", "exec", "-i", container, "bash", "-c", f"cat > '{path}'"],
-                           input=new.encode("utf-8"), capture_output=True, timeout=60)
+        w = subprocess.run(["docker", "exec", "-i", container, "bash", "-c", f"cat > '{path}'"],  # nosec B603 B607 -- docker on PATH is the bench contract, fixed argv
+                           input=new.encode("utf-8"), capture_output=True, timeout=60, check=False)
         return (f"Patched {args.strip()}." if w.returncode == 0
                 else f"Error: write failed: {w.stderr.decode('utf-8', 'replace')[:300]}")
 
@@ -122,11 +122,13 @@ NUDGE = ("[verifier] `git diff` in /testbed is still empty: no source change has
          "then stop.")
 
 
-def main() -> int:
+def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--naked-src", required=True)
     ap.add_argument("--model", default="gemma3:12b")
     ap.add_argument("--subset", default="princeton-nlp/SWE-bench_Lite")
+    ap.add_argument("--revision", default="6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2",
+                    help="dataset revision (pin for reproducibility)")
     ap.add_argument("--split", default="test")
     ap.add_argument("--slice", default="0:3")
     ap.add_argument("--steps", type=int, default=30)
@@ -134,14 +136,72 @@ def main() -> int:
     ap.add_argument("--mode", choices=["bash", "system"], default="bash",
                     help="bash: parity with mini-swe-agent; system: container read/patch + diff verifier")
     ap.add_argument("--nudges", type=int, default=3)
-    a = ap.parse_args()
+    return ap.parse_args()
+
+
+def _nudge_loop(name, a, ws, messages, tools, loop) -> tuple[str, int]:
+    """Run the agent, optionally nudging until a diff appears. Returns (status, nudges_used)."""
+    status = "ok"
+    nudges_used = 0
+    try:
+        loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
+        while a.mode == "system" and nudges_used < a.nudges:
+            if sh(["docker", "exec", "-w", "/testbed", name, "git", "diff"]).stdout.strip():
+                break
+            nudges_used += 1
+            print(f"--- verifier nudge {nudges_used}/{a.nudges} ---", flush=True)
+            messages.append({"role": "user", "content": NUDGE})
+            loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError, IndexError) as e:  # record, still collect whatever diff exists
+        status = f"error: {type(e).__name__}: {e}"
+    return status, nudges_used
+
+
+def _run_instance(row, a, out, ws, preds, preds_path, loop):
+    iid = row["instance_id"]
+    if iid in preds:
+        print(f"skip {iid} (done)")
+        return
+    name = f"naked-{iid.replace('__', '-')}-{int(time.time())}"
+    print(f"=== {iid}: pulling/starting {image_name(iid)}", flush=True)
+    t0 = time.time()
+    r = sh(["docker", "run", "-d", "--name", name, image_name(iid), "sleep", "infinity"], timeout=1800)
+    if r.returncode != 0:
+        print(f"container start failed: {r.stderr[:500]}")
+        return
+    try:
+        tools = {"shell": make_shell(name)}
+        if a.mode == "system":
+            tools.update(make_container_file_tools(name))
+        messages = [
+            {"role": "system", "content": loop._system_prompt(tools)},
+            {"role": "user", "content": PROMPT.format(problem=row["problem_statement"])},
+        ]
+        status, nudges_used = _nudge_loop(name, a, ws, messages, tools, loop)
+        diff = sh(["docker", "exec", "-w", "/testbed", name, "git", "diff"]).stdout
+        turns = sum(1 for m in messages if m["role"] == "assistant")
+        preds[iid] = {"instance_id": iid, "model_name_or_path": f"nakedagent/{a.model}",
+                      "model_patch": diff}
+        (out / f"{iid}.traj.json").write_text(json.dumps(
+            {"status": status, "mode": a.mode, "nudges_used": nudges_used,
+             "turns": turns, "elapsed_s": round(time.time() - t0, 1),
+             "messages": messages}, indent=1), encoding="utf-8")
+        preds_path.write_text(json.dumps(preds, indent=1), encoding="utf-8")
+        print(f"=== {iid}: {status}, turns={turns}, patch_chars={len(diff)}, "
+              f"{time.time() - t0:.0f}s", flush=True)
+    finally:
+        sh(["docker", "rm", "-f", name])
+
+
+def main() -> int:
+    a = _parse_args()
 
     sys.path.insert(0, a.naked_src)
-    from nakedagent import loop  # noqa: E402
-
     from datasets import load_dataset
+
+    from nakedagent import loop
     lo, hi = (int(x) for x in a.slice.split(":"))
-    rows = load_dataset(a.subset, split=a.split).select(range(lo, hi))
+    rows = load_dataset(a.subset, split=a.split, revision=a.revision).select(range(lo, hi))
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -154,51 +214,7 @@ def main() -> int:
     ws.mkdir(exist_ok=True)
 
     for row in rows:
-        iid = row["instance_id"]
-        if iid in preds:
-            print(f"skip {iid} (done)")
-            continue
-        name = f"naked-{iid.replace('__', '-')}-{int(time.time())}"
-        print(f"=== {iid}: pulling/starting {image_name(iid)}", flush=True)
-        t0 = time.time()
-        r = sh(["docker", "run", "-d", "--name", name, image_name(iid), "sleep", "infinity"], timeout=1800)
-        if r.returncode != 0:
-            print(f"container start failed: {r.stderr[:500]}")
-            continue
-        try:
-            tools = {"shell": make_shell(name)}
-            if a.mode == "system":
-                tools.update(make_container_file_tools(name))
-            messages = [
-                {"role": "system", "content": loop._system_prompt(tools)},
-                {"role": "user", "content": PROMPT.format(problem=row["problem_statement"])},
-            ]
-            status = "ok"
-            nudges_used = 0
-            try:
-                loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
-                while a.mode == "system" and nudges_used < a.nudges:
-                    if sh(["docker", "exec", "-w", "/testbed", name, "git", "diff"]).stdout.strip():
-                        break
-                    nudges_used += 1
-                    print(f"--- verifier nudge {nudges_used}/{a.nudges} ---", flush=True)
-                    messages.append({"role": "user", "content": NUDGE})
-                    loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
-            except Exception as e:  # record, still collect whatever diff exists
-                status = f"error: {type(e).__name__}: {e}"
-            diff = sh(["docker", "exec", "-w", "/testbed", name, "git", "diff"]).stdout
-            turns = sum(1 for m in messages if m["role"] == "assistant")
-            preds[iid] = {"instance_id": iid, "model_name_or_path": f"nakedagent/{a.model}",
-                          "model_patch": diff}
-            (out / f"{iid}.traj.json").write_text(json.dumps(
-                {"status": status, "mode": a.mode, "nudges_used": nudges_used,
-                 "turns": turns, "elapsed_s": round(time.time() - t0, 1),
-                 "messages": messages}, indent=1), encoding="utf-8")
-            preds_path.write_text(json.dumps(preds, indent=1), encoding="utf-8")
-            print(f"=== {iid}: {status}, turns={turns}, patch_chars={len(diff)}, "
-                  f"{time.time() - t0:.0f}s", flush=True)
-        finally:
-            sh(["docker", "rm", "-f", name])
+        _run_instance(row, a, out, ws, preds, preds_path, loop)
     return 0
 
 

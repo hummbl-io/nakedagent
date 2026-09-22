@@ -10,15 +10,15 @@ contains a tool call.
 
 from __future__ import annotations
 
-from functools import partial
 import sys
+from functools import partial
 from pathlib import Path
 
 from . import llm
 from .llm import DEFAULT_HOST
+from .plugins import load_plugins
 from .toolcall import parse
 from .tools import TOOLS, tool_shell
-from .plugins import load_plugins
 
 MAX_STEPS = 25  # tool-call rounds per human turn, before handing back control
 
@@ -150,7 +150,7 @@ def step(
         else:
             try:
                 result = tool(call.args, call.content, workspace)
-            except Exception as e:  # a tool bug shouldn't kill the loop; the
+            except Exception as e:  # noqa: BLE001 -- a tool bug shouldn't kill the loop; the
                 # model gets to see it and try something else, same as any
                 # other tool error.
                 result = f"Error: {type(e).__name__}: {e}"
