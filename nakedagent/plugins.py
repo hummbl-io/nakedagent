@@ -61,7 +61,7 @@ def _load_one(path: Path):
     try:
         sys.modules[modname] = module  # so plugins can import each other by name
         spec.loader.exec_module(module)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- any plugin error is reported, not fatal
         # don't leave a half-loaded module shadowing a future good one
         sys.modules.pop(modname, None)
         print(
@@ -92,22 +92,26 @@ def load_plugins(workspace: Path, registry: dict[str, ToolFunc] | None = None) -
     """
     merged: dict[str, ToolFunc] = dict(registry if registry is not None else TOOLS)
     disabled: set[str] = set()
+    for path in _plugin_files(workspace):
+        module = _load_one(path)
+        if module is None:
+            continue
+        plugin_tools = getattr(module, "TOOLS", None)
+        if isinstance(plugin_tools, dict):
+            for name, func in plugin_tools.items():
+                merged[name.lower()] = func
+        disable = getattr(module, "DISABLE", None)
+        if isinstance(disable, list):
+            disabled.update(n.lower() for n in disable)
+    for name in disabled:
+        merged.pop(name, None)
+    return merged
+
+
+def _plugin_files(workspace: Path):
     for d in _plugin_dirs(workspace):
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.py")):
-            if path.name.startswith("_"):
-                continue  # _foo.py is private, not a plugin
-            module = _load_one(path)
-            if module is None:
-                continue
-            plugin_tools = getattr(module, "TOOLS", None)
-            if isinstance(plugin_tools, dict):
-                for name, func in plugin_tools.items():
-                    merged[name.lower()] = func
-            disable = getattr(module, "DISABLE", None)
-            if isinstance(disable, list):
-                disabled.update(n.lower() for n in disable)
-    for name in disabled:
-        merged.pop(name, None)
-    return merged
+            if not path.name.startswith("_"):  # _foo.py is private, not a plugin
+                yield path

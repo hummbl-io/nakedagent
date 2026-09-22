@@ -1,10 +1,16 @@
 import tempfile
 import unittest
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 from unittest.mock import patch
 
-from nakedagent.loop import MAX_STEPS, _run_until_done, _system_prompt, step, SYSTEM_PROMPT
+from nakedagent.loop import (
+    MAX_STEPS,
+    SYSTEM_PROMPT,
+    _run_until_done,
+    _system_prompt,
+    step,
+)
 from nakedagent.tools import TOOLS, tool_shell
 
 

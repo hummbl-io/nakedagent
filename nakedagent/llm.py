@@ -39,6 +39,8 @@ def chat(messages: list[dict[str, str]], model: str, host: str = DEFAULT_HOST) -
     body = json.dumps(
         {"model": model, "messages": messages, "stream": False, "think": False}
     ).encode("utf-8")
+    if urllib.parse.urlparse(f"{host}/api/chat").scheme not in ("http", "https"):
+        raise OllamaError(f"refusing non-http(s) Ollama host: {host}")
     req = urllib.request.Request(
         f"{host}/api/chat",
         data=body,
@@ -46,7 +48,7 @@ def chat(messages: list[dict[str, str]], model: str, host: str = DEFAULT_HOST) -
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:  # nosec B310 -- scheme allowlist above
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         # Ollama was reached but returned a non-2xx (e.g. model not found,
@@ -56,7 +58,7 @@ def chat(messages: list[dict[str, str]], model: str, host: str = DEFAULT_HOST) -
         detail = ""
         try:
             detail = e.read().decode("utf-8", "replace")[:200]
-        except Exception:
+        except (OSError, UnicodeError):
             pass
         raise OllamaError(
             f"Ollama at {host} returned HTTP {e.code} {e.reason}"

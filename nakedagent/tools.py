@@ -14,8 +14,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 ToolFunc = Callable[[str, str, Path], str]
 
@@ -107,7 +107,7 @@ def _log_shell_event(
         with log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False))
             f.write("\n")
-    except Exception:
+    except (OSError, ValueError):
         # Auditability should not prevent the tool call from happening.
         pass
 
@@ -116,6 +116,158 @@ def _truncate(s: str) -> str:
     if len(s) <= MAX_OUTPUT:
         return s
     return s[:MAX_OUTPUT] + f"\n...[truncated, {len(s) - MAX_OUTPUT} more chars]"
+
+
+def _shell_gate(workspace: Path, cmd: str, is_tty: bool, allow_shell: bool,
+                shell_allowlist: tuple[str, ...]) -> str | None:
+    """Access checks. Returns an error string on denial, None when execution may proceed."""
+    if not is_tty and not allow_shell:
+        reason = "non-interactive shell execution requires --allow-shell"
+        _log_shell_event(
+            workspace, cmd, allowed=False, tty=False, reason=reason
+        )
+        return f"Error: shell execution blocked ({reason})."
+    if (
+        not is_tty
+        and allow_shell
+        and not _is_allowed_shell_command(cmd, shell_allowlist)
+    ):
+        reason = "non-interactive command is not in --shell-allowlist"
+        _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
+        return f"Error: shell execution blocked ({reason})."
+    if is_tty:
+        return _confirm_tty(workspace, cmd)
+    return None
+
+
+def _confirm_tty(workspace: Path, cmd: str) -> str | None:
+    """Interactive confirmation. Returns an error string on denial, None on consent."""
+    prefix = (
+        "\033[33mnakedagent wants to run:\033[0m"
+        if sys.stdout.isatty()
+        else "nakedagent wants to run:"
+    )
+    print(f"{prefix} {cmd}")
+    try:
+        answer = input("Allow? [y/N] ").strip().lower()
+    except EOFError:
+        # isatty() said yes but the read still failed -- fail safe:
+        # no answer means don't run, not "crash the whole loop."
+        _log_shell_event(
+            workspace,
+            cmd,
+            allowed=False,
+            tty=True,
+            reason="interactive confirmation unreadable",
+        )
+        return "Error: could not read a confirmation; command not run."
+    if answer not in ("y", "yes"):
+        _log_shell_event(
+            workspace,
+            cmd,
+            allowed=False,
+            tty=True,
+            reason="user declined"
+        )
+        return "Error: user declined to run this command."
+    return None
+
+
+def _check_exe(workspace: Path, cmd: str, argv: list[str], exe: str | None) -> str | None:
+    """Executable checks. Returns an error string on failure."""
+    if exe is None:
+        reason = f"not an executable on PATH: {argv[0] if argv else ''}"
+        _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
+        return (
+            f"Error: '{argv[0] if argv else ''}' is not an executable on PATH. "
+            "Non-interactive mode runs programs directly without a shell, so "
+            "shell built-ins (e.g. cmd's echo/dir) and operators (|, &&, ;) "
+            "are not available."
+        )
+    if (
+        os.name == "nt"
+        and exe.lower().endswith((".bat", ".cmd"))
+        and any(ch in _CMD_METACHARS for arg in argv[1:] for ch in arg)
+    ):
+        reason = "cmd.exe metacharacters in arguments to a batch file"
+        _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
+        return (
+            f"Error: shell execution blocked ({reason}); Windows runs "
+            ".bat/.cmd files through cmd.exe, which would interpret them."
+        )
+    return None
+
+
+def _resolve_argv(workspace: Path, cmd: str) -> list[str] | str:
+    """Parse and resolve a non-interactive command to argv, or an error string."""
+    try:
+        argv = _split_command(cmd)
+    except ValueError as exc:
+        _log_shell_event(
+            workspace, cmd, allowed=False, tty=False,
+            reason=f"shlex parse failure: {exc}",
+        )
+        return f"Error: malformed command ({exc})."
+    # Resolve the program explicitly: without a shell, built-ins such as
+    # cmd.exe's `echo`/`dir` do not exist, and a bare FileNotFoundError
+    # tells the model nothing useful.
+    exe = shutil.which(argv[0], path=os.environ.get("PATH")) if argv else None
+    err = _check_exe(workspace, cmd, argv, exe)
+    if err is not None:
+        return err
+    argv[0] = exe
+    return argv
+
+
+def _run_shell(workspace: Path, cmd: str, is_tty: bool, shell_timeout: int):
+    """Run the confirmed command. Returns CompletedProcess or an error string."""
+    try:
+        if is_tty:
+            # Interactive: user confirmed the full command string.
+            return subprocess.run(  # nosec B602 -- interactive TTY path: user confirmed the exact command string
+                cmd,
+                shell=True,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=shell_timeout,
+                stdin=subprocess.DEVNULL,  # a command that tries to read stdin
+                # would otherwise hang instead of failing fast (devin review, P3.8)
+                check=False,
+            )
+        # Non-interactive: parse to argv and run without a shell so that
+        # metacharacters (;, &&, $(), |) are literal args, not commands.
+        resolved = _resolve_argv(workspace, cmd)
+        if isinstance(resolved, str):
+            return resolved
+        return subprocess.run(  # nosec B603 -- fixed argv list, no shell
+            resolved,
+            shell=False,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=shell_timeout,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        _log_shell_event(
+            workspace,
+            cmd,
+            allowed=False,
+            tty=is_tty,
+            reason=f"timeout after {shell_timeout}s",
+        )
+        return f"Error: command timed out after {shell_timeout}s."
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        _log_shell_event(
+            workspace,
+            cmd,
+            allowed=False,
+            tty=is_tty,
+            reason=f"execution failure: {type(exc).__name__}: {exc}",
+        )
+        return f"Error: command execution failed: {type(exc).__name__}: {exc}"
 
 
 def tool_shell(
@@ -145,126 +297,13 @@ def tool_shell(
     # started from a terminal (a benchmark, a script run by hand) prompted
     # instead, often could not read an answer, and refused every command.
     is_tty = sys.stdin.isatty() and not allow_shell
-    if not is_tty and not allow_shell:
-        reason = "non-interactive shell execution requires --allow-shell"
-        _log_shell_event(
-            workspace, cmd, allowed=False, tty=False, reason=reason
-        )
-        return f"Error: shell execution blocked ({reason})."
-    if (
-        not is_tty
-        and allow_shell
-        and not _is_allowed_shell_command(cmd, shell_allowlist)
-    ):
-        reason = "non-interactive command is not in --shell-allowlist"
-        _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
-        return f"Error: shell execution blocked ({reason})."
-
-    if is_tty:
-        prefix = (
-            "\033[33mnakedagent wants to run:\033[0m"
-            if sys.stdout.isatty()
-            else "nakedagent wants to run:"
-        )
-        print(f"{prefix} {cmd}")
-        try:
-            answer = input("Allow? [y/N] ").strip().lower()
-        except EOFError:
-            # isatty() said yes but the read still failed -- fail safe:
-            # no answer means don't run, not "crash the whole loop."
-            _log_shell_event(
-                workspace,
-                cmd,
-                allowed=False,
-                tty=True,
-                reason="interactive confirmation unreadable",
-            )
-            return "Error: could not read a confirmation; command not run."
-        if answer not in ("y", "yes"):
-            _log_shell_event(
-                workspace,
-                cmd,
-                allowed=False,
-                tty=True,
-                reason="user declined"
-            )
-            return "Error: user declined to run this command."
-    try:
-        if is_tty:
-            # Interactive: user confirmed the full command string.
-            proc = subprocess.run(
-                cmd,
-                shell=True,
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=shell_timeout,
-                stdin=subprocess.DEVNULL,  # a command that tries to read stdin
-                # would otherwise hang instead of failing fast (devin review, P3.8)
-            )
-        else:
-            # Non-interactive: parse to argv and run without a shell so that
-            # metacharacters (;, &&, $(), |) are literal args, not commands.
-            try:
-                argv = _split_command(cmd)
-            except ValueError as exc:
-                _log_shell_event(
-                    workspace, cmd, allowed=False, tty=False,
-                    reason=f"shlex parse failure: {exc}",
-                )
-                return f"Error: malformed command ({exc})."
-            # Resolve the program explicitly: without a shell, built-ins such as
-            # cmd.exe's `echo`/`dir` do not exist, and a bare FileNotFoundError
-            # tells the model nothing useful.
-            exe = shutil.which(argv[0], path=os.environ.get("PATH")) if argv else None
-            if exe is None:
-                reason = f"not an executable on PATH: {argv[0] if argv else ''}"
-                _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
-                return (
-                    f"Error: '{argv[0] if argv else ''}' is not an executable on PATH. "
-                    "Non-interactive mode runs programs directly without a shell, so "
-                    "shell built-ins (e.g. cmd's echo/dir) and operators (|, &&, ;) "
-                    "are not available."
-                )
-            if (
-                os.name == "nt"
-                and exe.lower().endswith((".bat", ".cmd"))
-                and any(ch in _CMD_METACHARS for arg in argv[1:] for ch in arg)
-            ):
-                reason = "cmd.exe metacharacters in arguments to a batch file"
-                _log_shell_event(workspace, cmd, allowed=False, tty=False, reason=reason)
-                return (
-                    f"Error: shell execution blocked ({reason}); Windows runs "
-                    ".bat/.cmd files through cmd.exe, which would interpret them."
-                )
-            argv[0] = exe
-            proc = subprocess.run(
-                argv,
-                shell=False,
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=shell_timeout,
-                stdin=subprocess.DEVNULL,
-            )
-    except subprocess.TimeoutExpired:
-        _log_shell_event(
-            workspace,
-            cmd,
-            allowed=False,
-            tty=is_tty,
-            reason=f"timeout after {shell_timeout}s",
-        )
-        return f"Error: command timed out after {shell_timeout}s."
-    except Exception as exc:
-        _log_shell_event(
-            workspace,
-            cmd,
-            allowed=False,
-            tty=is_tty,
-            reason=f"execution failure: {type(exc).__name__}: {exc}",
-        )
-        return f"Error: command execution failed: {type(exc).__name__}: {exc}"
+    denial = _shell_gate(workspace, cmd, is_tty, allow_shell, shell_allowlist)
+    if denial is not None:
+        return denial
+    proc_or_err = _run_shell(workspace, cmd, is_tty, shell_timeout)
+    if isinstance(proc_or_err, str):
+        return proc_or_err
+    proc = proc_or_err
 
     _log_shell_event(
         workspace,

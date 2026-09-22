@@ -38,7 +38,7 @@ class TestCliExitCodes(unittest.TestCase):
         mock_run.assert_called_once_with(
             "do something",
             "qwen2.5-coder:7b",
-            Path(".").resolve(),
+            Path.cwd(),
             "http://localhost:11434",
             allow_shell=True,
             shell_allowlist=("echo",),
