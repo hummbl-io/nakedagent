@@ -41,6 +41,7 @@ def chat(
     *,
     api: str = "ollama",
     api_key_env: str = DEFAULT_API_KEY_ENV,
+    temperature: float | None = None,
 ) -> str:
     """Send a chat request, return the assistant reply text.
 
@@ -65,10 +66,14 @@ def chat(
         # think=False: thinking-capable models (qwen3.x) otherwise spend the
         # reply in hidden reasoning and return empty `content` to the loop.
         payload = {"model": model, "messages": messages, "stream": False, "think": False}
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
     else:
         name = "OpenAI-compatible API"
         url = f"{host.rstrip('/')}/chat/completions"
         payload = {"model": model, "messages": messages, "stream": False}
+        if temperature is not None:
+            payload["temperature"] = temperature
         # An unset variable means no auth header: local servers (vLLM, LM
         # Studio, Ollama's /v1) need none, and a hosted API that does will
         # answer 401, which is reported below with the variable's name.

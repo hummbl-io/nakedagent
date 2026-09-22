@@ -31,6 +31,13 @@ def main(argv: list[str] | None = None) -> int:
         help="wire format: ollama (local, default) or openai (any OpenAI-compatible server)",
     )
     p.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        metavar="T",
+        help="sampling temperature for the model (default: the server's own default)",
+    )
+    p.add_argument(
         "--api-key-env",
         default=DEFAULT_API_KEY_ENV,
         metavar="VAR",
@@ -92,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     llm_options = {}
     if args.api != "ollama":
         llm_options = {"api": args.api, "api_key_env": args.api_key_env}
+    if args.temperature is not None:
+        llm_options["temperature"] = args.temperature
     try:
         if args.prompt:
             run(
