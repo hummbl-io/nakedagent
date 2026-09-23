@@ -16,6 +16,7 @@ stdlib only; no third-party anything.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,21 @@ from typing import Any, TextIO
 
 from .functional import AgentEvent
 
-SCHEMA_VERSION = "nakedagent.eventlog@v0.1"
+SCHEMA_VERSION = "nakedagent.eventlog@v0.2"
+
+# The seal algorithm is part of the format: v0.1 logs were hashed with a
+# content-free genesis anchor and unframed field concatenation, so they can
+# NEVER verify under the v0.2 math -- rejecting them is the only correct
+# read. Bump this whenever the hashing changes even if the JSONL schema is
+# unchanged.
+HASH_ALG = "sha256-json-v2"
+
+# Event types this reader can interpret. Additive types bump the minor
+# schema (e.g. ESCALATE -> v0.3): v0.2 readers must refuse logs containing
+# types they cannot replay rather than silently skip them.
+KNOWN_EVENT_TYPES = frozenset(
+    {"USER_INPUT", "MODEL_REPLY", "TOOL_RESULT", "TERMINATION", "ALARM"}
+)
 
 
 class EventLogError(RuntimeError):
@@ -75,14 +90,23 @@ def open_log(
     system_prompt: str,
     model: str,
     workspace: str,
+    max_steps: int,
     extra: dict[str, Any] | None = None,
 ) -> EventLogWriter:
-    """Open a new event log and write the header record."""
+    """Open a new event log and write the header record.
+
+    `max_steps` is required: the replay budget is part of genesis (content-
+    bound hashing), so a log that doesn't record it cannot be verified
+    against the budget the run actually used.
+    """
     fh = open(path, "w", encoding="utf-8", newline="\n")  # noqa: SIM115 -- handle outlives the call; closed by EventLogWriter.close()
     header: dict[str, Any] = {
         "kind": "header",
         "version": SCHEMA_VERSION,
+        "hash_alg": HASH_ALG,
         "system_prompt": system_prompt,
+        "system_prompt_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+        "max_steps": max_steps,
         "model": model,
         "workspace": workspace,
     }
@@ -121,6 +145,27 @@ def read_log(path: Path) -> EventLog:
             if kind == "header":
                 if header is not None:
                     raise EventLogError(f"{path}:{lineno}: duplicate header")
+                version = rec.get("version")
+                if version == "nakedagent.eventlog@v0.1":
+                    raise EventLogError(
+                        f"{path}:{lineno}: v0.1 logs used a different seal "
+                        "algorithm and cannot be verified — regenerate under v0.2"
+                    )
+                if version != SCHEMA_VERSION:
+                    raise EventLogError(
+                        f"{path}:{lineno}: unsupported eventlog version {version!r} "
+                        f"(reader speaks {SCHEMA_VERSION})"
+                    )
+                if rec.get("hash_alg") != HASH_ALG:
+                    raise EventLogError(
+                        f"{path}:{lineno}: hash_alg {rec.get('hash_alg')!r} "
+                        f"!= {HASH_ALG!r} — refusing to verify under the wrong seal"
+                    )
+                ms = rec.get("max_steps")
+                if not isinstance(ms, int) or ms <= 0:
+                    raise EventLogError(f"{path}:{lineno}: header missing positive int 'max_steps'")
+                if not isinstance(rec.get("system_prompt_sha256"), str):
+                    raise EventLogError(f"{path}:{lineno}: header missing 'system_prompt_sha256'")
                 header = rec
             elif kind == "event":
                 if header is None:
@@ -128,6 +173,11 @@ def read_log(path: Path) -> EventLog:
                 for req in ("seq", "event_type", "payload", "state_hash"):
                     if req not in rec:
                         raise EventLogError(f"{path}:{lineno}: event missing '{req}'")
+                if rec["event_type"] not in KNOWN_EVENT_TYPES:
+                    raise EventLogError(
+                        f"{path}:{lineno}: unknown event_type {rec['event_type']!r} "
+                        "— this log needs a newer reader"
+                    )
                 events.append(
                     AgentEvent(
                         event_type=rec["event_type"],

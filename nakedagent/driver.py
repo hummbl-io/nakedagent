@@ -73,6 +73,7 @@ def run_functional(
             system_prompt=system_prompt,
             model=model,
             workspace=str(workspace),
+            max_steps=max_steps,
         )
 
     def feed(event: AgentEvent) -> list:
@@ -91,6 +92,12 @@ def run_functional(
                 feed(AgentEvent("TERMINATION", "MODEL_FINISHED"))
                 break
             for act in actions:
+                # Pre-dispatch guard: an effect must never execute when its
+                # TOOL_RESULT could not be ledgered -- the reducer ignores
+                # events on a terminal/exhausted state, so dispatching first
+                # would run the action with no corresponding ledger entry.
+                if state.is_terminal or state.step_count >= state.max_steps:
+                    break
                 result = _dispatch(registry, act, workspace)
                 feed(AgentEvent("TOOL_RESULT", result, {"tool": act.tool_name}))
                 if state.is_terminal:

@@ -13,6 +13,7 @@ Exit 0 on a fully verified trace, 1 on any mismatch or malformed log.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 
@@ -31,22 +32,33 @@ def verify(path: Path) -> tuple[bool, str]:
     if not isinstance(system_prompt, str):
         return False, "header missing system_prompt"
 
-    state, chain_ok = replay_trace(system_prompt, log.events)
+    # Genesis binding: the recorded sha256 must commit to the prompt text.
+    # Editing the header's system_prompt after the fact is detectable.
+    want_sha = log.header.get("system_prompt_sha256")
+    if hashlib.sha256(system_prompt.encode("utf-8")).hexdigest() != want_sha:
+        return False, "header system_prompt_sha256 does not match system_prompt"
+
+    # Replay under the ORIGINAL budget -- a larger max_steps could legitimize
+    # a trace that exhausted the real one.
+    state, chain_ok = replay_trace(
+        system_prompt, log.events,
+        max_steps=log.header["max_steps"],
+        recorded_hashes=log.event_hashes,
+    )
     if not chain_ok:
-        return False, "Merkle chain invalid: a state_hash does not recompute"
+        return False, "Merkle chain invalid: a recorded state_hash does not recompute"
 
-    if len(state.trace) != len(log.event_hashes):
-        return False, "trace length mismatch with recorded events"
-    for i, (rec, want) in enumerate(zip(state.trace, log.event_hashes), start=1):
-        if rec.state_hash != want:
-            return False, f"event {i}: recorded hash does not match recomputed state"
+    # A log without its trailer is truncated, not merely unverifiable --
+    # drivers always write `final` on normal exit, so its absence means the
+    # run (or the file) was cut off.
+    if log.trailer is None:
+        return False, "log truncated: no final trailer record"
 
-    if log.trailer is not None:
-        t = log.trailer
-        if t.get("step_count") != state.step_count:
-            return False, f"trailer step_count {t.get('step_count')} != recomputed {state.step_count}"
-        if t.get("state_hash") != state.current_hash():
-            return False, "trailer state_hash does not match recomputed terminal hash"
+    t = log.trailer
+    if t.get("step_count") != state.step_count:
+        return False, f"trailer step_count {t.get('step_count')} != recomputed {state.step_count}"
+    if t.get("state_hash") != state.current_hash():
+        return False, "trailer state_hash does not match recomputed terminal hash"
 
     tools_used = sum(
         1 for rec in state.trace if rec.event.event_type == "TOOL_RESULT"
