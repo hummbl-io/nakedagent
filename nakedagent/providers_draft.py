@@ -43,7 +43,6 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from .functional import ToolAction
 
@@ -79,9 +78,9 @@ class OpenRouterProvider:
         self.model = model
         self.api_key_env = api_key_env
         self.timeout_s = timeout_s
-        self.last_usage: Dict = {}
+        self.last_usage: dict = {}
 
-    def complete(self, messages: List[Dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, str]]) -> str:
         key = os.environ.get(self.api_key_env)
         if not key:
             raise RuntimeError(f"{self.api_key_env} not set")
@@ -176,7 +175,7 @@ class JevNoulGate:
         }
 
     def route_action(self, action: ToolAction,
-                     workspace: Path) -> Tuple[str, float, str]:
+                     workspace: Path) -> tuple[str, float, str]:
         """Tri-state routing: (route, p_risk, reason)."""
         key = os.environ.get(self.api_key_env)
         if not key:
@@ -192,7 +191,7 @@ class JevNoulGate:
             "state": state,
             "questions": self._questions(),
         }).encode("utf-8")
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         for attempt in range(2):  # one retry absorbs transient 429/5xx
             try:
                 req = urllib.request.Request(
@@ -226,7 +225,7 @@ class JevNoulGate:
                     return "BLOCK", GATE_UNREACHABLE, \
                         f"jev-gate HTTP {e.code} (fail-closed)"
                 time.sleep(2)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- fail-closed: any provider-side fault is a BLOCK
                 return "BLOCK", GATE_UNREACHABLE, \
                     f"jev-gate unreachable (fail-closed): {e}"
         else:
@@ -244,7 +243,7 @@ class JevNoulGate:
             f"jev allow: p_risk={p_risk:.2f} < {self.abstain_lo}{conf_sfx}"
 
     def evaluate_action(self, action: ToolAction,
-                        workspace: Path) -> Tuple[bool, float, str]:
+                        workspace: Path) -> tuple[bool, float, str]:
         """Two-state compat view: ESCALATE maps to is_alarm=True — a caller
         without suspension semantics must still refuse to dispatch a held
         action."""
@@ -269,8 +268,8 @@ class CliAgentProvider:
 
     provenance_class = OPAQUE_EXTERNAL
 
-    def __init__(self, cmd_prefix: List[str],
-                 inner_eventlog: Optional[Path] = None,
+    def __init__(self, cmd_prefix: list[str],
+                 inner_eventlog: Path | None = None,
                  timeout_s: int = 600):
         self.cmd_prefix = cmd_prefix
         # if set, the inner agent's own JSONL event log — its final merkle
@@ -278,12 +277,13 @@ class CliAgentProvider:
         self.inner_eventlog = inner_eventlog
         self.timeout_s = timeout_s
 
-    def complete(self, messages: List[Dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, str]]) -> str:
         last = messages[-1]["content"] if messages else ""
         try:
             res = subprocess.run(
                 self.cmd_prefix + ["-p", last],
-                capture_output=True, text=True, timeout=self.timeout_s)
+                capture_output=True, text=True, timeout=self.timeout_s,
+                check=False)
         except subprocess.TimeoutExpired:
             raise RuntimeError(
                 f"cli-agent timed out after {self.timeout_s}s")
@@ -292,7 +292,7 @@ class CliAgentProvider:
                 f"cli-agent exit {res.returncode}: {res.stderr[:500]}")
         return res.stdout.strip()
 
-    def provenance_receipt(self) -> Dict[str, str]:
+    def provenance_receipt(self) -> dict[str, str]:
         """Attach to the MODEL_REPLY metadata so audit sees the boundary."""
         rec = {"class": self.provenance_class,
                "cmd": " ".join(self.cmd_prefix)}
