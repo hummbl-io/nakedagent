@@ -146,7 +146,6 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
         actions=act_tuple,
         state_hash=step_hash,
     )
-
     new_state = AgentState(
         step_count=step_idx,
         max_steps=state.max_steps,
@@ -156,6 +155,17 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
         terminal_reason=term_reason,
     )
     return new_state, actions
+
+
+reduce_agent_step = agent_reducer
+
+
+class FunctionalMachine:
+    """Convenience class wrapper around pure agent_reducer."""
+
+    @staticmethod
+    def step(state: AgentState, event: AgentEvent) -> Tuple[AgentState, List[ToolAction]]:
+        return agent_reducer(state, event)
 
 
 def replay_trace(system_prompt: str, events: List[AgentEvent]) -> Tuple[AgentState, bool]:
