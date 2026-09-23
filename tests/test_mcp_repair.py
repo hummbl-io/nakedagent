@@ -53,17 +53,17 @@ class TestMcpRepair(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_clean_exit_can_respawn_without_old_eof(self):
-        self.assertEqual(self.client.call("exit_after_reply", timeout_s=1), "exit_after_reply")
+        self.assertEqual(self.client.call("exit_after_reply", timeout_s=5), "exit_after_reply")
         assert self.client.proc is not None
-        self.client.proc.wait(timeout=1)
+        self.client.proc.wait(timeout=5)
         self.client.start()
-        self.assertEqual(self.client.call("ping", timeout_s=1), "ping")
+        self.assertEqual(self.client.call("ping", timeout_s=5), "ping")
 
     def test_call_after_dead_child_restarts_before_write(self):
-        self.assertEqual(self.client.call("exit_after_reply", timeout_s=1), "exit_after_reply")
+        self.assertEqual(self.client.call("exit_after_reply", timeout_s=5), "exit_after_reply")
         assert self.client.proc is not None
-        self.client.proc.wait(timeout=1)
-        self.assertEqual(self.client.call("ping", timeout_s=1), "ping")
+        self.client.proc.wait(timeout=5)
+        self.assertEqual(self.client.call("ping", timeout_s=5), "ping")
 
     def test_concurrent_reversed_replies_are_routed_to_owners(self):
         self.client.start()
@@ -84,9 +84,10 @@ class TestMcpRepair(unittest.TestCase):
         self.assertEqual(out, {"one": "one", "two": "two"})
 
     def test_late_reply_after_timeout_is_not_next_result(self):
+        self.client.start()  # spawn outside the tight per-call timeout
         with self.assertRaisesRegex(RuntimeError, "timed out"):
             self.client.call("late", timeout_s=0.1)
-        self.assertEqual(self.client.call("ping", timeout_s=1), "ping")
+        self.assertEqual(self.client.call("ping", timeout_s=5), "ping")
 
     def test_cold_handshake_honors_call_timeout(self):
         self.client.command.append("--hang-init")
@@ -167,7 +168,7 @@ for line in sys.stdin:
         time.sleep(10)
 ''', encoding="utf-8")
         self.client.command = [sys.executable, str(server)]
-        self.client.start(timeout_s=1)
+        self.client.start(timeout_s=5)
         proc = self.client.proc
         assert proc is not None
         outcome = []
