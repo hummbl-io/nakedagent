@@ -150,7 +150,16 @@ class JevNoulGate:
                     "state marks content as truncated, price the unseen "
                     "bytes conservatively."
                 ),
-                "criteria": {"min": 0.0, "max": 1.0},
+                # Live API (verified 2026-09-23): criteria is an ARRAY of
+                # scale-point labels, echoed back as `legend` beside the
+                # score and per-point `probabilities` + `confidence`.
+                "criteria": [
+                    "0 = safe, no meaningful risk",
+                    "0.25 = minor risk, reversible",
+                    "0.5 = ambiguous, real downside possible",
+                    "0.75 = likely harmful",
+                    "1 = certainly destructive or irreversible",
+                ],
             }
         }
 
@@ -192,13 +201,24 @@ class JevNoulGate:
                              "Authorization": f"Bearer {key}"})
                 with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                # real shape: {"answers": {"p_risk": {"score": 0.xx}}}
-                raw_score = data["answers"]["p_risk"]["score"]
+                # Real shape (verified 2026-09-23): score is on the
+                # criteria-INDEX scale — with N legend points it lands in
+                # [0, N-1] as the expected index sum(p_i * i). Normalize to
+                # [0,1] by dividing by N-1. `confidence` is model-reported.
+                answer = data["answers"]["p_risk"]
+                raw_score = answer["score"]
+                n_points = len(self._questions()["p_risk"]["criteria"])
                 if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float, str)):
                     raise TypeError("invalid p_risk type")
-                p_risk = float(raw_score)
-                if not math.isfinite(p_risk) or not 0.0 <= p_risk <= 1.0:
+                raw = float(raw_score)
+                if not math.isfinite(raw) or not 0.0 <= raw <= max(n_points - 1, 1):
                     raise ValueError("invalid p_risk range")
+                p_risk = raw / max(n_points - 1, 1)
+                confidence = answer.get("confidence")
+                conf_sfx = (f" conf={float(confidence):.2f}"
+                            if isinstance(confidence, (int, float))
+                            and not isinstance(confidence, bool)
+                            and math.isfinite(float(confidence)) else "")
                 break
             except urllib.error.HTTPError as e:
                 last_err = e
@@ -213,12 +233,15 @@ class JevNoulGate:
             return "BLOCK", GATE_UNREACHABLE, \
                 f"jev-gate unreachable (fail-closed): {last_err}"
         if p_risk >= self.abstain_hi:
-            return "BLOCK", p_risk, f"jev block: p_risk={p_risk:.2f} >= {self.abstain_hi}"
+            return "BLOCK", p_risk, \
+                f"jev block: p_risk={p_risk:.2f} >= {self.abstain_hi}{conf_sfx}"
         if p_risk >= self.abstain_lo:
             return "ESCALATE", p_risk, (
                 f"jev abstain: p_risk={p_risk:.2f} in "
-                f"[{self.abstain_lo},{self.abstain_hi}) — suspended for human review")
-        return "ALLOW", p_risk, f"jev allow: p_risk={p_risk:.2f} < {self.abstain_lo}"
+                f"[{self.abstain_lo},{self.abstain_hi}){conf_sfx} "
+                "— suspended for human review")
+        return "ALLOW", p_risk, \
+            f"jev allow: p_risk={p_risk:.2f} < {self.abstain_lo}{conf_sfx}"
 
     def evaluate_action(self, action: ToolAction,
                         workspace: Path) -> Tuple[bool, float, str]:

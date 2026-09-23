@@ -46,17 +46,22 @@ class JevShapeTests(unittest.TestCase):
         return route, score, len(requests)
 
     def test_invalid_scores_fail_closed_without_retry(self):
+        # Score is on the criteria-index scale: 5 legend points -> raw in
+        # [0,4] (verified against the live Decisions API 2026-09-23).
         invalid = ('"NaN"', 'NaN', '"Infinity"', '"-Infinity"', '1e9999',
-                   'true', 'false', 'null', '[]', '{}', '-0.1', '1.1', '"bad"')
+                   'true', 'false', 'null', '[]', '{}', '-0.1', '4.1', '5',
+                   '"bad"')
         for raw in invalid:
             with self.subTest(raw=raw):
                 self.assertEqual(self._route(raw), ("BLOCK", draft.GATE_UNREACHABLE, 1))
 
     def test_finite_unit_interval_boundaries_and_numeric_string(self):
-        for raw, expected in (("0", "ALLOW"), ("0.299", "ALLOW"),
-                              ("0.30", "ESCALATE"), ("0.549", "ESCALATE"),
-                              ("0.55", "BLOCK"), ("1", "BLOCK"),
-                              ('"0.4"', "ESCALATE")):
+        # Raw index-scale boundaries: normalized = raw / 4, so the abstain
+        # band [0.30, 0.55) maps to raw [1.2, 2.2).
+        for raw, expected in (("0", "ALLOW"), ("1.196", "ALLOW"),
+                              ("1.2", "ESCALATE"), ("2.196", "ESCALATE"),
+                              ("2.2", "BLOCK"), ("4", "BLOCK"),
+                              ('"1.6"', "ESCALATE"), ("1.1", "ALLOW")):
             with self.subTest(raw=raw):
                 route, score, count = self._route(raw)
                 self.assertEqual(route, expected)
