@@ -85,7 +85,7 @@ def run_functional(
 
     try:
         feed(AgentEvent("USER_INPUT", prompt))
-        while not state.is_terminal:
+        while not state.is_terminal and not state.suspended:
             reply = llm_fn(list(state.history), model, host)
             actions = feed(AgentEvent("MODEL_REPLY", reply))
             if not actions:

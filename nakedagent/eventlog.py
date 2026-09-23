@@ -24,20 +24,23 @@ from typing import Any, TextIO
 
 from .functional import AgentEvent
 
-SCHEMA_VERSION = "nakedagent.eventlog@v0.2"
+# v0.3 adds the ESCALATE event type (gate suspension) -- additive, so v0.2
+# logs remain readable here while v0.2 readers must refuse v0.3 logs.
+SCHEMA_VERSION = "nakedagent.eventlog@v0.3"
+SUPPORTED_VERSIONS = frozenset({"nakedagent.eventlog@v0.2", "nakedagent.eventlog@v0.3"})
 
 # The seal algorithm is part of the format: v0.1 logs were hashed with a
 # content-free genesis anchor and unframed field concatenation, so they can
-# NEVER verify under the v0.2 math -- rejecting them is the only correct
+# NEVER verify under the v0.2+ math -- rejecting them is the only correct
 # read. Bump this whenever the hashing changes even if the JSONL schema is
 # unchanged.
 HASH_ALG = "sha256-json-v2"
 
 # Event types this reader can interpret. Additive types bump the minor
-# schema (e.g. ESCALATE -> v0.3): v0.2 readers must refuse logs containing
+# schema (e.g. ESCALATE -> v0.3): readers must refuse logs containing
 # types they cannot replay rather than silently skip them.
 KNOWN_EVENT_TYPES = frozenset(
-    {"USER_INPUT", "MODEL_REPLY", "TOOL_RESULT", "TERMINATION", "ALARM"}
+    {"USER_INPUT", "MODEL_REPLY", "TOOL_RESULT", "TERMINATION", "ALARM", "ESCALATE"}
 )
 
 
@@ -151,10 +154,10 @@ def read_log(path: Path) -> EventLog:
                         f"{path}:{lineno}: v0.1 logs used a different seal "
                         "algorithm and cannot be verified — regenerate under v0.2"
                     )
-                if version != SCHEMA_VERSION:
+                if version not in SUPPORTED_VERSIONS:
                     raise EventLogError(
                         f"{path}:{lineno}: unsupported eventlog version {version!r} "
-                        f"(reader speaks {SCHEMA_VERSION})"
+                        f"(reader speaks {sorted(SUPPORTED_VERSIONS)})"
                     )
                 if rec.get("hash_alg") != HASH_ALG:
                     raise EventLogError(

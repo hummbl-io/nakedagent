@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Protocol, Tuple, Union
 
 from .functional import (
     AgentEvent,
@@ -109,11 +109,25 @@ class DevinCliProvider:
             raise RuntimeError(f"DevinCliProvider failed (exit {e.returncode}): {e.stderr}") from e
 
 
+# Tri-state gate verdict. ALLOW dispatches; BLOCK is terminal (ALARM);
+# ESCALATE suspends the turn without executing -- the held action is sealed
+# into the ledger as an ESCALATE event and a human verdict re-enters later
+# as a USER_INPUT. ESCALATE must never be used for infrastructure failure:
+# an unreachable gate is fail-closed, i.e. BLOCK.
+GateRoute = Literal["ALLOW", "BLOCK", "ESCALATE"]
+
+
 class NoulGateEvaluator(Protocol):
     """Protocol for pre-execution micro-adjudication over actions."""
 
     def evaluate_action(self, action: ToolAction, workspace: Path) -> Tuple[bool, float, str]:
-        """Returns (is_alarm, p_risk, reason)."""
+        """Returns (is_alarm, p_risk, reason). Kept for backward compat."""
+        ...
+
+    def route_action(self, action: ToolAction, workspace: Path) -> Tuple[GateRoute, float, str]:
+        """Returns (route, p_risk, reason). Implementations that only
+        provide evaluate_action still work: the harness derives
+        ALLOW/BLOCK from the boolean."""
         ...
 
 
@@ -148,6 +162,14 @@ class DefaultSafeNoulGate:
 
         # Safe read-only or bounded operations
         return False, 0.05, "Action validated within safe bounds"
+
+    def route_action(self, action: ToolAction, workspace: Path) -> Tuple[GateRoute, float, str]:
+        """Default shim: the heuristic gate has no escalation band, so it
+        derives ALLOW/BLOCK from evaluate_action. Gates with an abstention
+        band (e.g. a Jev gate that defers low-confidence calls to a human)
+        override this to return ESCALATE."""
+        is_alarm, p_risk, reason = self.evaluate_action(action, workspace)
+        return ("BLOCK" if is_alarm else "ALLOW"), p_risk, reason
 
 
 class SidekickHarness:
@@ -243,13 +265,19 @@ class SidekickHarness:
         self._mcp_clients.clear()
 
     def run_turn(self, user_prompt: str) -> AgentState:
-        """Execute a full turn (user prompt -> model -> tool loops -> final text)."""
+        """Execute a full turn (user prompt -> model -> tool loops -> final text).
+
+        Returns early with `state.suspended` when the gate ESCALATEs an
+        action: the held action is ledgered, nothing dispatched. Feed the
+        human verdict back with another run_turn("approved: ..." / "denied")
+        -- the USER_INPUT lifts the suspension and the model re-decides.
+        """
         # Event 1: User prompt
         user_event = AgentEvent(event_type="USER_INPUT", payload=user_prompt)
         self.state, actions = FunctionalMachine.step(self.state, user_event)
 
-        # Loop until terminal or no further actions
-        while not self.state.is_terminal:
+        # Loop until terminal, suspended, or no further actions
+        while not self.state.is_terminal and not self.state.suspended:
             # Model completion
             messages = list(self.state.history)
             model_reply = self.provider.complete(messages)
@@ -269,14 +297,42 @@ class SidekickHarness:
             for action in actions:
                 if self.state.is_terminal or self.state.step_count >= self.state.max_steps:
                     break
-                # Noul Pre-Execution Gate
-                is_alarm, p_risk, reason = self.noul_gate.evaluate_action(action, self.workspace)
-                if is_alarm:
+                # Noul Pre-Execution Gate — tri-state route. Gates that
+                # only implement evaluate_action still work via the shim.
+                route_fn = getattr(self.noul_gate, "route_action", None)
+                if route_fn is not None:
+                    route, p_risk, reason = route_fn(action, self.workspace)
+                else:
+                    is_alarm, p_risk, reason = self.noul_gate.evaluate_action(
+                        action, self.workspace
+                    )
+                    route = "BLOCK" if is_alarm else "ALLOW"
+
+                if route == "BLOCK":
                     alarm_event = AgentEvent(
                         event_type="ALARM",
                         payload=f"Action blocked by Noul Gate (risk={p_risk:.2f}): {reason}",
                     )
                     self.state, _ = FunctionalMachine.step(self.state, alarm_event)
+                    break
+                if route == "ESCALATE":
+                    esc_event = AgentEvent(
+                        event_type="ESCALATE",
+                        payload=(
+                            f"Action suspended for human review (risk={p_risk:.2f}): {reason}\n"
+                            f"tool={action.tool_name} args={action.args}"
+                        ),
+                        # tool/args/content are sealed into the step hash via
+                        # metadata -- the held action is fully reconstructible
+                        # from the ledger alone.
+                        metadata={
+                            "tool": action.tool_name,
+                            "args": action.args,
+                            "content": action.content,
+                            "p_risk": p_risk,
+                        },
+                    )
+                    self.state, _ = FunctionalMachine.step(self.state, esc_event)
                     break
 
                 # Execute tool
