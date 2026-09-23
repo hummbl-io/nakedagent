@@ -1,5 +1,4 @@
-"""Tests for JSONL event-log persistence."""
-import hashlib
+"""The v0.4 wire is explicit; older logs are never verified under it."""
 import json
 import tempfile
 import unittest
@@ -13,211 +12,100 @@ from nakedagent.eventlog import (
     read_log,
 )
 from nakedagent.functional import AgentEvent
-
-
-def _header(**over):
-    """A minimal valid v0.2 header line."""
-    h = {
-        "kind": "header",
-        "version": SCHEMA_VERSION,
-        "hash_alg": HASH_ALG,
-        "system_prompt": "s",
-        "system_prompt_sha256": hashlib.sha256(b"s").hexdigest(),
-        "max_steps": 25,
-        "model": "m",
-        "workspace": "w",
-    }
-    h.update(over)
-    return json.dumps(h)
+from nakedagent.replay import verify
 
 
 class TestEventLog(unittest.TestCase):
-    def test_round_trip(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "run.jsonl"
-            w = open_log(
-                path, system_prompt="SYS", model="m:1",
-                workspace="/w", max_steps=9,
-            )
-            w.write_event(AgentEvent("USER_INPUT", "hi"), "h1")
-            w.write_event(
-                AgentEvent("MODEL_REPLY", "ok", {"k": "v"}), "h2"
-            )
-            w.close(2, "h2", True, "MODEL_FINISHED")
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "run.jsonl"
 
-            log = read_log(path)
-            self.assertEqual(log.header["version"], SCHEMA_VERSION)
-            self.assertEqual(log.header["hash_alg"], HASH_ALG)
-            self.assertEqual(log.header["system_prompt"], "SYS")
-            self.assertEqual(log.header["max_steps"], 9)
-            self.assertEqual(
-                log.header["system_prompt_sha256"],
-                hashlib.sha256(b"SYS").hexdigest(),
-            )
-            self.assertEqual(log.header["model"], "m:1")
-            self.assertEqual(len(log.events), 2)
-            self.assertEqual(log.events[0].event_type, "USER_INPUT")
-            self.assertEqual(log.events[1].metadata, {"k": "v"})
-            self.assertEqual(log.event_hashes, ["h1", "h2"])
-            self.assertEqual(log.trailer["step_count"], 2)
-            self.assertTrue(log.trailer["is_terminal"])
+    def valid(self):
+        writer = open_log(self.path, system_prompt="s", model="m", workspace="w", max_steps=5)
+        writer.write_event(AgentEvent("USER_INPUT", "go"), "a" * 64)
+        writer.write_event(AgentEvent("ESCALATE", "held", {"tool": "shell"}), "b" * 64)
+        writer.close(2, "b" * 64, False, None, suspended=True)
+        return [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines()]
 
-    def test_seq_numbers_increment(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "run.jsonl"
-            w = open_log(path, system_prompt="s", model="m", workspace="w", max_steps=5)
-            w.write_event(AgentEvent("USER_INPUT", "a"), "x")
-            w.write_event(AgentEvent("USER_INPUT", "b"), "y")
-            w.close(2, "y", False, None)
-            seqs = [
-                json.loads(l)["seq"]
-                for l in path.read_text().splitlines()
-                if json.loads(l)["kind"] == "event"
-            ]
-            self.assertEqual(seqs, [1, 2])
+    def write(self, rows):
+        self.path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
-    def test_write_after_close_raises(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "run.jsonl"
-            w = open_log(path, system_prompt="s", model="m", workspace="w", max_steps=5)
-            w.close(0, "h", False, None)
-            with self.assertRaises(EventLogError):
-                w.write_event(AgentEvent("USER_INPUT", "x"), "h")
+    def test_round_trip_suspended_structure(self):
+        self.valid()
+        log = read_log(self.path)
+        self.assertEqual(log.header["version"], SCHEMA_VERSION)
+        self.assertEqual(log.header["hash_alg"], HASH_ALG)
+        self.assertEqual([e.event_type for e in log.events], ["USER_INPUT", "ESCALATE"])
+        self.assertEqual(log.trailer["suspended"], True)
+        # Synthetic hashes are structurally valid but not computed.
+        self.assertFalse(verify(self.path)[0])
 
-    def test_malformed_line_reports_lineno(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "bad.jsonl"
-            path.write_text(_header() + "\n" + "not-json\n")
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn(":2:", str(cm.exception))
+    def test_write_after_close(self):
+        self.valid()
+        writer = open_log(self.path, system_prompt="s", model="m", workspace="w")
+        writer.close(0, "a" * 64, True, "done")
+        with self.assertRaises(EventLogError):
+            writer.write_event(AgentEvent("USER_INPUT", "x"), "b" * 64)
 
-    def test_missing_header_rejected(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "nohead.jsonl"
-            path.write_text(
-                '{"kind": "event", "seq": 1, "event_type": "USER_INPUT", '
-                '"payload": "x", "state_hash": "h"}\n'
-            )
-            with self.assertRaises(EventLogError):
-                read_log(path)
+    def test_legacy_versions_refused_explicitly(self):
+        for version in ("nakedagent.eventlog@v0.2", "nakedagent.eventlog@v0.3"):
+            with self.subTest(version=version):
+                rows = self.valid()
+                rows[0]["version"] = version
+                self.write(rows)
+                with self.assertRaisesRegex(EventLogError, "legacy"):
+                    read_log(self.path)
 
-    def test_event_missing_field_rejected(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "miss.jsonl"
-            path.write_text(
-                _header() + "\n"
-                '{"kind": "event", "seq": 1, "event_type": "USER_INPUT", '
-                '"payload": "x"}\n'
-            )
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("state_hash", str(cm.exception))
+    def test_unknown_versions_and_hash_algorithm_refused(self):
+        for key, value, message in (("version", "nakedagent.eventlog@v9", "unsupported"),
+                                    ("hash_alg", "other", "hash_alg")):
+            with self.subTest(key=key):
+                rows = self.valid()
+                rows[0][key] = value
+                self.write(rows)
+                with self.assertRaisesRegex(EventLogError, message):
+                    read_log(self.path)
 
+    def test_nonstr_versions_fail_as_log_error(self):
+        for version in ([], {}, None, 4):
+            with self.subTest(version=version):
+                rows = self.valid()
+                rows[0]["version"] = version
+                self.write(rows)
+                with self.assertRaisesRegex(EventLogError, "version must be a string"):
+                    read_log(self.path)
+                ok, detail = verify(self.path)
+                self.assertFalse(ok)
+                self.assertIn("version must be a string", detail)
 
-class TestV02HeaderValidation(unittest.TestCase):
-    """v0.2 strictness: version, hash_alg, max_steps, prompt sha."""
+    def test_structural_mutations_refused(self):
+        mutations = {
+            "missing_header": lambda r: r.pop(0),
+            "missing_final": lambda r: r.pop(),
+            "duplicate_final": lambda r: r.append(r[-1].copy()),
+            "wrong_seq": lambda r: r[1].update(seq=2),
+            "missing_max_steps": lambda r: r[0].pop("max_steps"),
+            "unknown_event": lambda r: r[1].update(event_type="FUTURE"),
+            "unsealed_extra": lambda r: r[0].update(unknown="x"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                rows = self.valid()
+                mutate(rows)
+                self.write(rows)
+                with self.assertRaises(EventLogError):
+                    read_log(self.path)
 
-    def _write(self, td, header_line, *body_lines):
-        path = Path(td) / "run.jsonl"
-        path.write_text(header_line + "\n" + "\n".join(body_lines) + "\n")
-        return path
-
-    def test_v01_log_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            # A syntactically fine v0.1 log must still be refused: its seals
-            # were computed under a different algorithm.
-            path = self._write(
-                td,
-                json.dumps({
-                    "kind": "header", "version": "nakedagent.eventlog@v0.1",
-                    "system_prompt": "s", "model": "m", "workspace": "w",
-                }),
-                '{"kind": "event", "seq": 1, "event_type": "USER_INPUT", '
-                '"payload": "x", "state_hash": "h"}',
-            )
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("v0.1", str(cm.exception))
-
-    def test_unknown_version_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = self._write(td, _header(version="nakedagent.eventlog@v9.9"))
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("unsupported", str(cm.exception))
-
-    def test_wrong_hash_alg_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = self._write(td, _header(hash_alg="md5-concat"))
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("hash_alg", str(cm.exception))
-
-    def test_missing_max_steps_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            bad = _header()
-            rec = json.loads(bad)
-            del rec["max_steps"]
-            path = self._write(td, json.dumps(rec))
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("max_steps", str(cm.exception))
-
-    def test_nonpositive_max_steps_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = self._write(td, _header(max_steps=0))
-            with self.assertRaises(EventLogError):
-                read_log(path)
-
-    def test_missing_prompt_sha_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            rec = json.loads(_header())
-            del rec["system_prompt_sha256"]
-            path = self._write(td, json.dumps(rec))
-            with self.assertRaises(EventLogError):
-                read_log(path)
-
-    def test_unknown_event_type_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            # Forward-compat: a future log with a type we cannot replay must
-            # be refused, not silently skipped.
-            path = self._write(
-                td, _header(),
-                '{"kind": "event", "seq": 1, "event_type": "QUANTUM_LEAP", '
-                '"payload": "x", "state_hash": "h"}',
-            )
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("QUANTUM_LEAP", str(cm.exception))
-
-    def test_escalate_event_accepted(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = self._write(
-                td, _header(),
-                '{"kind": "event", "seq": 1, "event_type": "ESCALATE", '
-                '"payload": "held", "state_hash": "h"}',
-            )
-            log = read_log(path)
-            self.assertEqual(log.events[0].event_type, "ESCALATE")
-
-    def test_v02_log_still_readable(self):
-        with tempfile.TemporaryDirectory() as td:
-            # v0.3 is additive (ESCALATE); a v0.2 log reads fine under it.
-            path = self._write(
-                td, _header(version="nakedagent.eventlog@v0.2"),
-                '{"kind": "event", "seq": 1, "event_type": "USER_INPUT", '
-                '"payload": "x", "state_hash": "h"}',
-            )
-            log = read_log(path)
-            self.assertEqual(log.header["version"], "nakedagent.eventlog@v0.2")
-
-    def test_v04_refused(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = self._write(td, _header(version="nakedagent.eventlog@v0.4"))
-            with self.assertRaises(EventLogError) as cm:
-                read_log(path)
-            self.assertIn("unsupported", str(cm.exception))
+    def test_duplicate_json_key_and_nonfinite_number_refused(self):
+        self.valid()
+        raw = self.path.read_text(encoding="utf-8")
+        for mutation in (raw.replace('"seq": 1', '"seq": 1, "seq": 1', 1),
+                         raw.replace('"seq": 1', '"seq": NaN', 1)):
+            with self.subTest(mutation=mutation[:20]):
+                self.path.write_text(mutation, encoding="utf-8")
+                with self.assertRaises(EventLogError):
+                    read_log(self.path)
 
 
 if __name__ == "__main__":

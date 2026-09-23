@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import subprocess
 import time
@@ -124,8 +125,15 @@ class JevNoulGate:
     def __init__(self, abstain_lo: float = 0.30, abstain_hi: float = 0.55,
                  api_key_env: str = "OPENROUTER_API_KEY",
                  model: str = JEV_MODEL, timeout_s: int = 60):
-        self.abstain_lo = abstain_lo   # allow/escalate boundary
-        self.abstain_hi = abstain_hi   # escalate/block boundary
+        # A nonempty abstention band is part of the tri-state contract.
+        # Check the unit interval before float() so huge integers cannot
+        # overflow during validation or accidentally bypass the band.
+        if (type(abstain_lo) not in (int, float) or
+                type(abstain_hi) not in (int, float) or
+                not 0 <= abstain_lo < abstain_hi <= 1):
+            raise ValueError("abstention thresholds must satisfy 0 <= lo < hi <= 1")
+        self.abstain_lo = float(abstain_lo)  # allow/escalate boundary
+        self.abstain_hi = float(abstain_hi)  # escalate/block boundary
         self.api_key_env = api_key_env
         self.model = model
         self.timeout_s = timeout_s
@@ -185,7 +193,12 @@ class JevNoulGate:
                 with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 # real shape: {"answers": {"p_risk": {"score": 0.xx}}}
-                p_risk = float(data["answers"]["p_risk"]["score"])
+                raw_score = data["answers"]["p_risk"]["score"]
+                if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float, str)):
+                    raise TypeError("invalid p_risk type")
+                p_risk = float(raw_score)
+                if not math.isfinite(p_risk) or not 0.0 <= p_risk <= 1.0:
+                    raise ValueError("invalid p_risk range")
                 break
             except urllib.error.HTTPError as e:
                 last_err = e
