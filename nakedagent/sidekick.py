@@ -185,6 +185,7 @@ class SidekickHarness:
         max_steps: int = 25,
         system_prompt: Optional[str] = None,
         noul_gate: Optional[NoulGateEvaluator] = None,
+        policy: Optional[Dict[str, Any]] = None,
     ):
         self.workspace = Path(workspace)
         self.provider = provider
@@ -198,8 +199,12 @@ class SidekickHarness:
         # System prompt
         self.system_prompt = system_prompt or _system_prompt(self.tools)
 
-        # Initialize functional state
-        self.state = AgentState.initial(self.system_prompt, max_steps=self.max_steps)
+        # Initialize functional state. `policy` is genesis-bound (v0.4):
+        # deployers writing the trace to an event log should declare the
+        # provider/workspace identity here so replay binds it.
+        self.state = AgentState.initial(
+            self.system_prompt, max_steps=self.max_steps, policy=policy
+        )
 
     def attach_mcp_client(self, client: StdlibMcpClient) -> List[str]:
         """Mount all tools exposed by an MCP client into the Sidekick tool registry."""
