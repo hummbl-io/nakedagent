@@ -68,22 +68,38 @@ class AgentState:
     def current_hash(self) -> str:
         """Return the current Merkle root hash."""
         if not self.trace:
-            return hashlib.sha256(b"GENESIS_STATE").hexdigest()
+            # Content-bound genesis: runs differing only in system_prompt
+            # or max_steps must not share an initial hash.
+            genesis = json.dumps({
+                "genesis": True,
+                "system_prompt": self.history[0]["content"] if self.history else "",
+                "max_steps": self.max_steps,
+            }, sort_keys=True, separators=(",", ":"))
+            return hashlib.sha256(genesis.encode("utf-8")).hexdigest()
         return self.trace[-1].state_hash
 
 
 def compute_step_hash(prev_hash: str, step_index: int, event: AgentEvent, actions: Tuple[ToolAction, ...]) -> str:
-    """Compute cryptographic hash of the transition."""
-    h = hashlib.sha256()
-    h.update(prev_hash.encode("utf-8"))
-    h.update(str(step_index).encode("utf-8"))
-    h.update(event.event_type.encode("utf-8"))
-    h.update(event.payload.encode("utf-8"))
-    for act in actions:
-        h.update(act.tool_name.encode("utf-8"))
-        h.update(act.args.encode("utf-8"))
-        h.update(act.content.encode("utf-8"))
-    return h.hexdigest()
+    """Compute cryptographic hash of the transition.
+
+    Canonical framed serialization: every field boundary is explicit in
+    the hashed bytes, so no two distinct transitions can collide, and
+    event.metadata is bound into the seal rather than silently dropped.
+    """
+    canonical = json.dumps({
+        "prev": prev_hash,
+        "step": step_index,
+        "event": {
+            "type": event.event_type,
+            "payload": event.payload,
+            "metadata": event.metadata,
+        },
+        "actions": [
+            {"tool": a.tool_name, "args": a.args, "content": a.content}
+            for a in actions
+        ],
+    }, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, List[ToolAction]]:
@@ -127,7 +143,7 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
             is_terminal = False
         else:
             for call in parsed:
-                actions.append(ToolAction(tool_name=call.tool, args=call.args, content=call.content))
+                actions.append(ToolAction(tool_name=call.tool.lower(), args=call.args, content=call.content))
 
     elif event.event_type in ("TERMINATION", "ALARM"):
         is_terminal = True
@@ -168,17 +184,42 @@ class FunctionalMachine:
         return agent_reducer(state, event)
 
 
-def replay_trace(system_prompt: str, events: List[AgentEvent]) -> Tuple[AgentState, bool]:
+def replay_trace(
+    system_prompt: str,
+    events: List[AgentEvent],
+    max_steps: int = 25,
+    recorded_hashes: Optional[List[str]] = None,
+) -> Tuple[AgentState, bool]:
     """Replay an event stream deterministically from genesis.
 
-    Returns (final_state, is_valid_merkle_chain).
+    Returns (final_state, is_valid).
+
+    `max_steps` must match the recorded run's budget — a run configured
+    for 50 steps replays all of its events; one left at the default 25
+    silently truncates.
+
+    `recorded_hashes`: the per-step state_hash list captured when the run
+    was generated (e.g. from the event log). With it, replay binds the
+    recomputed chain to the recorded one — the actual tamper check.
+    Without it, the flag only confirms the recomputation is internally
+    consistent, which it always is for a deterministic reducer.
+
+    Events after the terminal step are not replayed and cannot be
+    verified — they are outside the sealed trace by construction.
     """
-    state = AgentState.initial(system_prompt)
+    state = AgentState.initial(system_prompt, max_steps=max_steps)
     for ev in events:
+        if state.is_terminal:
+            break
         state, _ = agent_reducer(state, ev)
 
-    # Verify Merkle integrity
-    prev = hashlib.sha256(b"GENESIS_STATE").hexdigest()
+    if recorded_hashes is not None:
+        recomputed = [r.state_hash for r in state.trace]
+        return state, recomputed == list(recorded_hashes)
+
+    # Self-consistency check only — verifies the reducer is deterministic,
+    # not that this stream matches any external record.
+    prev = AgentState.initial(system_prompt, max_steps=max_steps).current_hash()
     for rec in state.trace:
         expected = compute_step_hash(prev, rec.step_index, rec.event, rec.actions)
         if rec.state_hash != expected:
