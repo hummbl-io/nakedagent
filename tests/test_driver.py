@@ -149,7 +149,7 @@ class TestDriver(unittest.TestCase):
 
 
 class TestReplayVerify(unittest.TestCase):
-    """verify() against a real logged run: tamper detection per v0.2."""
+    """verify() against a real logged run: tamper detection per v0.4."""
 
     def _run_log(self, td, max_steps=25):
         workspace = Path(td)

@@ -25,7 +25,7 @@ Peer-review fixes applied (crab 4749f357):
       index by question type key, not the value directly.
     - Abstention band [abstain_lo, abstain_hi) routes ESCALATE — the
       run suspends for a human verdict rather than silently blocking.
-      (The tri-state seam landed in schema v0.3.)
+      (The tri-state seam landed in schema v0.3; eventlog is now v0.4.)
     - Fail-closed returns p=-1.0 (out-of-range sentinel) so a gate outage
       is distinguishable from a real verdict in ledger stats.
     - Gate judges the same content the tool executes: full content up to
