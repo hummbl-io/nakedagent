@@ -12,6 +12,7 @@ All implemented using pure Python standard library (zero third-party dependencie
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 import urllib.error
@@ -169,6 +170,8 @@ class DefaultSafeNoulGate:
         band (e.g. a Jev gate that defers low-confidence calls to a human)
         override this to return ESCALATE."""
         is_alarm, p_risk, reason = self.evaluate_action(action, workspace)
+        if type(is_alarm) is not bool:
+            return "BLOCK", -1.0, "invalid legacy gate response"
         return ("BLOCK" if is_alarm else "ALLOW"), p_risk, reason
 
 
@@ -278,13 +281,18 @@ class SidekickHarness:
 
         # Loop until terminal, suspended, or no further actions
         while not self.state.is_terminal and not self.state.suspended:
+            if self.state.step_count >= self.state.max_steps:
+                break
             # Model completion
-            messages = list(self.state.history)
+            messages = [dict(message) for message in self.state.history]
             model_reply = self.provider.complete(messages)
 
             # Event 2: Model reply
             model_event = AgentEvent(event_type="MODEL_REPLY", payload=model_reply)
             self.state, actions = FunctionalMachine.step(self.state, model_event)
+
+            if self.state.is_terminal:
+                break
 
             if not actions:
                 # Model produced no tool calls -> turn complete, hand control back to human
@@ -299,15 +307,30 @@ class SidekickHarness:
                     break
                 # Noul Pre-Execution Gate — tri-state route. Gates that
                 # only implement evaluate_action still work via the shim.
-                route_fn = getattr(self.noul_gate, "route_action", None)
-                if route_fn is not None:
-                    route, p_risk, reason = route_fn(action, self.workspace)
-                else:
-                    is_alarm, p_risk, reason = self.noul_gate.evaluate_action(
-                        action, self.workspace
-                    )
-                    route = "BLOCK" if is_alarm else "ALLOW"
+                try:
+                    route_fn = getattr(self.noul_gate, "route_action", None)
+                    if route_fn is not None:
+                        route, p_risk, reason = route_fn(action, self.workspace)
+                    else:
+                        is_alarm, p_risk, reason = self.noul_gate.evaluate_action(
+                            action, self.workspace
+                        )
+                        if type(is_alarm) is not bool:
+                            raise TypeError("legacy gate alarm must be bool")
+                        route = "BLOCK" if is_alarm else "ALLOW"
+                except Exception:  # noqa: BLE001 -- gate failure blocks, never dispatches
+                    route, p_risk, reason = "BLOCK", -1.0, "gate unavailable"
 
+                # No malformed gate result may fall through to effect dispatch.
+                valid_risk = (
+                    isinstance(p_risk, (int, float)) and not isinstance(p_risk, bool)
+                    and (0.0 <= p_risk <= 1.0 or (route == "BLOCK" and p_risk == -1.0))
+                    and math.isfinite(p_risk)
+                )
+                if route not in ("ALLOW", "BLOCK", "ESCALATE") or not valid_risk:
+                    route, p_risk, reason = "BLOCK", -1.0, "invalid gate response"
+                if not isinstance(reason, str):
+                    reason = "invalid gate reason"
                 if route == "BLOCK":
                     alarm_event = AgentEvent(
                         event_type="ALARM",
@@ -362,7 +385,7 @@ class SidekickHarness:
         return self.state
 
     def export_merkle_trace(self) -> List[Dict[str, Any]]:
-        """Export the verified cryptographic Merkle trace of this session."""
+        """Export locally hash-linked reported events; this does not attest effects."""
         return [
             {
                 "step_index": r.step_index,

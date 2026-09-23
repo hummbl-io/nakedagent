@@ -164,11 +164,8 @@ class TestDeterminismAndReplay(unittest.TestCase):
         divergent = [i for i, (a, b) in enumerate(zip(recorded, recomputed)) if a != b]
         self.assertTrue(divergent and divergent[0] <= 3)
 
-    def test_postterminal_events_invisible_to_replay(self):
-        """R14: replay_trace silently ignores events after terminal —
-        including mutated/truncated tail content. Chain verify covers only
-        the consumed prefix; the eventlog trailer check is what catches a
-        dropped tail. This test pins that semantic so it's a choice."""
+    def test_postterminal_events_rejected_by_replay(self):
+        """v0.4 refuses a tail beyond a terminal event."""
         rng = random.Random(SEED)
         events = _gen_stream(rng, 10, types=NONTERMINAL_TYPES)
         events.insert(5, AgentEvent("TERMINATION", "done"))
@@ -176,12 +173,8 @@ class TestDeterminismAndReplay(unittest.TestCase):
         tail_mutated[8] = AgentEvent("USER_INPUT", "MUTATED-TAIL")
         _, ok_clean = replay_trace("sp", events)
         _, ok_mut = replay_trace("sp", tail_mutated)
-        self.assertTrue(ok_clean)
-        # A tail mutation past terminal is invisible to chain verification:
-        self.assertTrue(
-            ok_mut,
-            "R14 semantics changed — post-terminal mutations now detected",
-        )
+        self.assertFalse(ok_clean)
+        self.assertFalse(ok_mut)
 
 
 class TestBoundedTermination(unittest.TestCase):

@@ -10,7 +10,7 @@ Separation of concerns:
 
     reducer        -> (state, event) -> (state, actions)   [pure, provable]
     driver         -> executes actions, produces events     [impure, thin]
-    eventlog       -> durable record of what happened       [append-only]
+    eventlog       -> local record of admitted events       [append-only]
 
 The imperative loop in `loop.py` remains the default path; the driver is the
 provable lane for one-shot runs (`--event-log`).
@@ -65,7 +65,10 @@ def run_functional(
         shell_timeout=shell_timeout,
     )
     system_prompt = _system_prompt(registry)
-    state = AgentState.initial(system_prompt, max_steps=max_steps)
+    state = AgentState.initial(
+        system_prompt, max_steps=max_steps,
+        policy={"model": model, "workspace": str(workspace), "extra": {}},
+    )
 
     log: EventLogWriter | None = None
     if event_log_path is not None:
@@ -79,6 +82,8 @@ def run_functional(
 
     def feed(event: AgentEvent) -> list:
         nonlocal state
+        if state.is_terminal or state.step_count >= state.max_steps or (state.suspended and event.event_type != "USER_INPUT"):
+            raise RuntimeError("cannot admit an event after terminal state or max_steps")
         state, actions = agent_reducer(state, event)
         if log is not None:
             log.write_event(event, state.current_hash())
@@ -87,16 +92,18 @@ def run_functional(
     try:
         feed(AgentEvent("USER_INPUT", prompt))
         while not state.is_terminal and not state.suspended:
-            reply = llm_fn(list(state.history), model, host, **(llm_options or {}))
+            # A reply needs one admission slot before the model effect.
+            if state.step_count >= state.max_steps:
+                break
+            reply = llm_fn([dict(message) for message in state.history], model, host, **(llm_options or {}))
             actions = feed(AgentEvent("MODEL_REPLY", reply))
+            if state.is_terminal:
+                break
             if not actions:
                 feed(AgentEvent("TERMINATION", "MODEL_FINISHED"))
                 break
             for act in actions:
-                # Pre-dispatch guard: an effect must never execute when its
-                # TOOL_RESULT could not be ledgered -- the reducer ignores
-                # events on a terminal/exhausted state, so dispatching first
-                # would run the action with no corresponding ledger entry.
+                # Reserve the TOOL_RESULT admission slot before execution.
                 if state.is_terminal or state.step_count >= state.max_steps:
                     break
                 result = _dispatch(registry, act, workspace)
@@ -106,5 +113,5 @@ def run_functional(
         return state
     finally:
         if log is not None:
-            log.close(state.step_count, state.current_hash(), state.is_terminal, state.terminal_reason)
-
+            log.close(state.step_count, state.current_hash(), state.is_terminal,
+                      state.terminal_reason, state.suspended)
