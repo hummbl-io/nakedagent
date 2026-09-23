@@ -125,6 +125,10 @@ def load_plugins(
             plugin_tools = getattr(module, "TOOLS", None)
             if isinstance(plugin_tools, dict):
                 for name, func in plugin_tools.items():
+                    if name.lower() == "__refused__":
+                        # Reserved: the parser emits refusals under this
+                        # name; registering it would execute refused calls.
+                        continue
                     merged[name.lower()] = func
             disable = getattr(module, "DISABLE", None)
             if isinstance(disable, list):

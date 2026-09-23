@@ -125,21 +125,26 @@ class DefaultSafeNoulGate:
 
     def evaluate_action(self, action: ToolAction, workspace: Path) -> Tuple[bool, float, str]:
         tool = action.tool_name.lower()
-        content = action.content.lower()
 
-        # Hard tripwire for dangerous destructive shell operations
+        # Adjudicated surface: `args` is always in scope (every tool's
+        # dispatch reads it); `content` is in scope for shell, which
+        # executes `content or args`. Checking content alone leaves args
+        # as an uninspected execution channel.
+        surface = action.args.lower()
         if tool == "shell":
-            destructive_patterns = [
-                "rm -rf /",
-                "rmdir /s /q c:\\",
-                "format ",
-                ":(){ :|:& };:",
-                "git push -f origin main",
-                "git reset --hard",
-            ]
-            for pat in destructive_patterns:
-                if pat in content:
-                    return True, 0.99, f"Critical tripwire matched destructive pattern: '{pat}'"
+            surface += "\n" + action.content.lower()
+
+        destructive_patterns = [
+            "rm -rf /",
+            "rmdir /s /q c:\\",
+            "format ",
+            ":(){ :|:& };:",
+            "git push -f origin main",
+            "git reset --hard",
+        ]
+        for pat in destructive_patterns:
+            if pat in surface:
+                return True, 0.99, f"Critical tripwire matched destructive pattern: '{pat}'"
 
         # Safe read-only or bounded operations
         return False, 0.05, "Action validated within safe bounds"
@@ -179,8 +184,25 @@ class SidekickHarness:
         registered = []
 
         for t in mcp_tools:
-            tool_name = t.get("name")
-            if not tool_name:
+            rpc_name = t.get("name")
+            if not isinstance(rpc_name, str) or not rpc_name:
+                continue
+            # Registry/dispatch normalize lowercase (parsed tool names are
+            # lowercased at action construction); the RPC keeps the server's
+            # real name so CamelCase tools stay reachable.
+            tool_name = rpc_name.lower()
+            if tool_name == "__refused__":
+                # Reserved: the parser emits refusals under this name; a
+                # mounted tool claiming it would execute every refused call.
+                print("[sidekick] refusing MCP tool '__refused__' (reserved)", file=sys.stderr)
+                continue
+            if tool_name in self.tools:
+                # A mounted MCP tool must never silently replace a builtin:
+                # the gate threat-model and dispatch table would diverge.
+                print(
+                    f"[sidekick] refusing MCP tool shadow: '{tool_name}' already registered",
+                    file=sys.stderr,
+                )
                 continue
 
             def _make_mcp_runner(name: str) -> ToolFunc:
@@ -195,14 +217,14 @@ class SidekickHarness:
                                 params = {"input": content}
                         elif args.strip():
                             params = {"args": args.strip()}
-                        res = client.call_tool(name, params)
+                        res = client.invoke_tool(name, params)
                         return json.dumps(res, indent=2) if isinstance(res, (dict, list)) else str(res)
                     except Exception as e:
                         return f"Error executing MCP tool '{name}': {e}"
 
                 return _runner
 
-            runner = _make_mcp_runner(tool_name)
+            runner = _make_mcp_runner(rpc_name)
             runner.usage = f"```{tool_name}\n{{...parameters...}}\n```"
             self.tools[tool_name] = runner
             registered.append(tool_name)
@@ -240,8 +262,13 @@ class SidekickHarness:
                 # Model produced no tool calls -> turn complete, hand control back to human
                 break
 
-            # Execute emitted actions
+            # Execute emitted actions — but never dispatch an effect whose
+            # result can't be ledgered: once the state is terminal or the
+            # step budget is spent, the reducer would drop the TOOL_RESULT
+            # and the effect would execute off-ledger.
             for action in actions:
+                if self.state.is_terminal or self.state.step_count >= self.state.max_steps:
+                    break
                 # Noul Pre-Execution Gate
                 is_alarm, p_risk, reason = self.noul_gate.evaluate_action(action, self.workspace)
                 if is_alarm:
@@ -269,6 +296,12 @@ class SidekickHarness:
                     metadata={"tool": action.tool_name},
                 )
                 self.state, _ = FunctionalMachine.step(self.state, tool_event)
+
+                # Stop dispatching siblings once terminal — post-terminal
+                # effects would execute but their results are dropped by
+                # the reducer, leaving effects with no ledger record.
+                if self.state.is_terminal:
+                    break
 
         return self.state
 
