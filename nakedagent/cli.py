@@ -69,6 +69,17 @@ def main(argv: list[str] | None = None) -> int:
             "`python -m nakedagent.replay PATH`."
         ),
     )
+    p.add_argument(
+        "--resume",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Resume a suspended event log at PATH: replay-verify the recorded "
+            "prefix, then feed PROMPT as the human verdict that lifts the "
+            "suspension. PATH is reused as the event log — the suspended "
+            "trailer is replaced, the Merkle chain continues."
+        ),
+    )
     p.add_argument("--version", action="version", version=__version__)
     args = p.parse_args(argv)
 
@@ -81,6 +92,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.event_log and not args.prompt:
         print("error: --event-log requires a one-shot prompt", file=sys.stderr)
+        return 1
+    if args.resume and not args.prompt:
+        print("error: --resume requires PROMPT as the verdict input", file=sys.stderr)
+        return 1
+    if args.resume and args.event_log and args.resume != args.event_log:
+        print("error: --resume reuses the same path as --event-log; pass only --resume", file=sys.stderr)
         return 1
     host = args.host
     if host is None:
@@ -95,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         llm_options = {"api": args.api, "api_key_env": args.api_key_env}
     try:
         if args.prompt:
-            if args.event_log:
+            if args.event_log or args.resume:
                 from .driver import run_functional
 
                 run_functional(
@@ -103,11 +120,12 @@ def main(argv: list[str] | None = None) -> int:
                     args.model,
                     workspace,
                     host,
-                    event_log_path=args.event_log,
+                    event_log_path=args.resume or args.event_log,
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
                     llm_options=llm_options,
+                    resume_from=args.resume,
                 )
             else:
                 run(
@@ -131,6 +149,10 @@ def main(argv: list[str] | None = None) -> int:
                 llm_options=llm_options,
             )
     except LLMError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except (RuntimeError, ValueError) as e:
+        # Resume refusals and eventlog integrity failures land here.
         print(f"error: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

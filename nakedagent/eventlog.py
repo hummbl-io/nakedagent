@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -102,6 +103,45 @@ def open_log(
     fh.write(json.dumps(header, allow_nan=False) + "\n")
     fh.flush()
     return EventLogWriter(fh=fh)
+
+
+def require_resumable(parsed: EventLog, path: Path) -> None:
+    """Refuse unless `parsed` (from read_log) is a suspended v0.4 log.
+
+    Read-only check: run this BEFORE replay validation decides to resume,
+    and before `open_resumed_log` mutates the file. A terminal run cannot
+    resume; a missing trailer means the log is truncated or corrupt.
+    """
+    if parsed.trailer is None or parsed.trailer.get("suspended") is not True:
+        raise EventLogError(
+            f"{path}: can only resume a suspended log "
+            f"(trailer: {parsed.trailer})")
+
+
+def open_resumed_log(path: Path, parsed: EventLog) -> EventLogWriter:
+    """Re-open `path` for continuation after a suspended trailer.
+
+    Removes the trailer record — the final record describes the run's
+    *current* end state, so continuing replaces it rather than falsifying
+    history (the suspension stays visible in the ESCALATE/USER_INPUT
+    events themselves). Call only after `require_resumable` and a
+    recorded-hash-bound replay have both passed: this mutates the file.
+    The returned writer continues sequence numbers; hash continuity comes
+    from the replayed AgentState, not from this function.
+    """
+    lines = path.read_bytes().split(b"\n")
+    nonblank = [i for i, ln in enumerate(lines) if ln.strip()]
+    trailer_idx = nonblank[-1]
+    body = b"\n".join(lines[:trailer_idx]) + b"\n"
+    tmp = path.with_name(path.name + ".resume-tmp")
+    try:
+        tmp.write_bytes(body)
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    fh = open(path, "a", encoding="utf-8", newline="\n")  # noqa: SIM115
+    return EventLogWriter(fh=fh, seq=len(parsed.events))
 
 
 @dataclass

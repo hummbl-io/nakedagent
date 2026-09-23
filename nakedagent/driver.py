@@ -52,11 +52,19 @@ def run_functional(
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
     llm_options: dict | None = None,
+    resume_from: Path | None = None,
 ) -> AgentState:
     """Run `prompt` through the reducer-interleaved loop. Returns final state.
 
     `llm_fn` and `tools` are injectable so tests and replay experiments can
     swap the effect layer without monkeypatching module globals.
+
+    `resume_from` re-opens a suspended event log instead of starting a
+    fresh run: the recorded events are replayed through the reducer with
+    recorded-hash and policy binding (refusing a corrupted or non-suspended
+    source), the trailer is replaced, and `prompt` enters as the human
+    verdict that lifts the suspension. `event_log_path` must equal
+    `resume_from` — resuming writes back to the same file.
     """
     registry = tools if tools is not None else _build_tools(
         workspace,
@@ -65,20 +73,47 @@ def run_functional(
         shell_timeout=shell_timeout,
     )
     system_prompt = _system_prompt(registry)
-    state = AgentState.initial(
-        system_prompt, max_steps=max_steps,
-        policy={"model": model, "workspace": str(workspace), "extra": {}},
-    )
 
     log: EventLogWriter | None = None
-    if event_log_path is not None:
-        log = open_log(
-            event_log_path,
-            system_prompt=system_prompt,
-            model=model,
-            workspace=str(workspace),
-            max_steps=max_steps,
+    if resume_from is not None:
+        if event_log_path != resume_from:
+            raise ValueError("resume_from requires event_log_path to name the same file")
+        from .eventlog import open_resumed_log, read_log, require_resumable
+        from .functional import replay_trace
+        parsed = read_log(resume_from)
+        require_resumable(parsed, resume_from)
+        header = parsed.header
+        state, chain_ok = replay_trace(
+            header["system_prompt"], parsed.events,
+            max_steps=header["max_steps"],
+            recorded_hashes=parsed.event_hashes,
+            policy={"model": header["model"], "workspace": header["workspace"],
+                    "extra": header.get("extra", {})},
         )
+        if not chain_ok:
+            raise RuntimeError("cannot resume: recorded chain does not recompute")
+        if not state.suspended or state.is_terminal:
+            raise RuntimeError("cannot resume: replayed state is not suspended")
+        if system_prompt != header["system_prompt"]:
+            raise RuntimeError(
+                "cannot resume: current registry prompt differs from the "
+                "recorded genesis prompt — the continued run must bind the "
+                "same policy surface")
+        max_steps = state.max_steps
+        log = open_resumed_log(resume_from, parsed)
+    else:
+        state = AgentState.initial(
+            system_prompt, max_steps=max_steps,
+            policy={"model": model, "workspace": str(workspace), "extra": {}},
+        )
+        if event_log_path is not None:
+            log = open_log(
+                event_log_path,
+                system_prompt=system_prompt,
+                model=model,
+                workspace=str(workspace),
+                max_steps=max_steps,
+            )
 
     def feed(event: AgentEvent) -> list:
         nonlocal state
