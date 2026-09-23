@@ -37,6 +37,16 @@ def main(argv: list[str] | None = None) -> int:
         default=120,
         help="Timeout in seconds for shell tool execution.",
     )
+    p.add_argument(
+        "--event-log",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Run through the functional driver and append every agent event "
+            "to a JSONL log at PATH. One-shot mode only. Verify with "
+            "`python -m nakedagent.replay PATH`."
+        ),
+    )
     p.add_argument("--version", action="version", version=__version__)
     args = p.parse_args(argv)
 
@@ -47,17 +57,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.shell_timeout <= 0:
         print("error: --shell-timeout must be greater than 0", file=sys.stderr)
         return 1
+    if args.event_log and not args.prompt:
+        print("error: --event-log requires a one-shot prompt", file=sys.stderr)
+        return 1
     try:
         if args.prompt:
-            run(
-                args.prompt,
-                args.model,
-                workspace,
-                args.host,
-                allow_shell=args.allow_shell,
-                shell_allowlist=shell_allowlist,
-                shell_timeout=args.shell_timeout,
-            )
+            if args.event_log:
+                from .driver import run_functional
+
+                run_functional(
+                    args.prompt,
+                    args.model,
+                    workspace,
+                    args.host,
+                    event_log_path=args.event_log,
+                    allow_shell=args.allow_shell,
+                    shell_allowlist=shell_allowlist,
+                    shell_timeout=args.shell_timeout,
+                )
+            else:
+                run(
+                    args.prompt,
+                    args.model,
+                    workspace,
+                    args.host,
+                    allow_shell=args.allow_shell,
+                    shell_allowlist=shell_allowlist,
+                    shell_timeout=args.shell_timeout,
+                )
         else:
             run_interactive(
                 args.model,

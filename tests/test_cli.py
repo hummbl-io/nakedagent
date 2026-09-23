@@ -61,6 +61,18 @@ class TestCliExitCodes(unittest.TestCase):
     def test_keyboard_interrupt_exits_130(self, _mock_run):
         self.assertEqual(cli.main(["-w", ".", "do something"]), 130)
 
+    def test_event_log_requires_oneshot_prompt(self):
+        self.assertEqual(cli.main(["--event-log", "run.jsonl"]), 1)
+
+    @patch("nakedagent.driver.run_functional")
+    def test_event_log_routes_to_functional_driver(self, mock_fn):
+        self.assertEqual(
+            cli.main(["-w", ".", "--event-log", "run.jsonl", "do something"]),
+            0,
+        )
+        self.assertEqual(mock_fn.call_count, 1)
+        self.assertEqual(mock_fn.call_args.kwargs["event_log_path"], Path("run.jsonl"))
+
 
 if __name__ == "__main__":
     unittest.main()
