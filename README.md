@@ -93,6 +93,26 @@ allowlist, all non-interactive shell commands are blocked.
 No `pip install` step. That's not an oversight — `nakedagent/` only imports
 the standard library, so running it in place works.
 
+## Provable execution: event log + replay
+
+One-shot runs can go through the functional lane — the agent is a pure Mealy
+machine (`functional.agent_reducer`: `(state, event) -> (state, actions)`),
+and a thin driver (`driver.py`) performs the actual model/tool IO while
+appending every event to a JSONL log:
+
+```bash
+python -m nakedagent "add a .gitignore" --event-log run.jsonl
+```
+
+Each logged event carries the Merkle state hash *after* that transition, so
+the trace is a tamper-evident receipt. Replay reconstructs the run with zero
+model calls and verifies the whole chain:
+
+```bash
+python -m nakedagent.replay run.jsonl
+# PASS run.jsonl: verified 5 events (1 tool results); final hash 6d1e0965…
+```
+
 ## Status
 
 MVP. Single model backend, four foundation tools, no streaming. The plugin

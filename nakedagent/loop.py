@@ -37,9 +37,12 @@ _HEADER = (
 
 _RULES = """\
 Rules:
-- One tool call at a time is safest; you may use more than one per message if
-  you're confident, but each runs and its result is shown to you before you
-  continue.
+- One tool call at a time is safest; you may emit more than one per message
+  if you're confident, but batched calls all run without seeing each other's
+  results -- a call that depends on an earlier result must wait for the next
+  message.
+- Only emit a fenced tool block when you mean to execute it -- every tagged
+  fence at column 0 is dispatched, including ones meant as examples.
 - `patch`'s SEARCH text must match the file exactly (including whitespace) \
 and uniquely -- if it doesn't, you'll get an error back and should read the \
 file again before retrying.
