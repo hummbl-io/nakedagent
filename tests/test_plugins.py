@@ -19,8 +19,13 @@ class TestPluginLoad(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self._tmp.name)
+        self._fake_home = Path(self._tmp.name) / "fake_home"
+        self._fake_home.mkdir()
+        self._home_patch = unittest.mock.patch("pathlib.Path.home", return_value=self._fake_home)
+        self._home_patch.start()
 
     def tearDown(self):
+        self._home_patch.stop()
         self._tmp.cleanup()
 
     def test_no_plugin_dirs_returns_foundation_unchanged(self):
@@ -104,8 +109,13 @@ class TestPluginDisable(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self._tmp.name)
+        self._fake_home = Path(self._tmp.name) / "fake_home"
+        self._fake_home.mkdir()
+        self._home_patch = unittest.mock.patch("pathlib.Path.home", return_value=self._fake_home)
+        self._home_patch.start()
 
     def tearDown(self):
+        self._home_patch.stop()
         self._tmp.cleanup()
 
     def test_disable_removes_foundation_tool(self):
