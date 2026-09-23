@@ -38,7 +38,7 @@ they will become required (Phase 2) after fleet cleanup.
 
 - Commit format: Conventional Commits
 - Branch naming: `type/agent/short-desc`
-- License: Apache 2.0
+- License: MIT (see `LICENSE`)
 - `.gitattributes` is required â€” the canonical fleet version normalizes text files to LF and marks binary types. Without it, Windows clones accumulate CRLF noise that pollutes diffs, blocks hooks, and creates phantom merge conflicts. Do not remove or weaken it.
 - AI agents may assist with research, review, patch preparation, and operational coordination, but must not be credited in Git commit authorship metadata or commit-message trailers. Do not add `Co-authored-by`, `Generated-by`, `Authored-with`, or equivalent AI/vendor/agent attribution to commits. Agent activity belongs in internal receipts, bus messages, handoffs, or PR notes, not commit credit.
 

@@ -55,5 +55,21 @@ class TestHttpErrorResponse(unittest.TestCase):
         self.assertNotIn("could not reach", str(ctx.exception))
 
 
+class TestThinkingDisabled(unittest.TestCase):
+    """Regression: qwen3.5 through nakedagent returned an empty reply because
+    thinking mode consumed the response. The request must send think=false."""
+
+    @patch("urllib.request.urlopen")
+    def test_request_body_disables_thinking(self, mock_urlopen):
+        import json
+
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"message": {"content": "ok"}}'
+        )
+        self.assertEqual(chat([], "model", host="http://localhost:11434"), "ok")
+        sent = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertIs(sent["think"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

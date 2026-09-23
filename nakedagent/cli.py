@@ -5,16 +5,38 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .llm import DEFAULT_HOST, OllamaError
+from .llm import APIS, DEFAULT_API_KEY_ENV, DEFAULT_HOST, LLMError
 from .loop import run, run_interactive
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="nakedagent", description=__doc__)
     p.add_argument("prompt", nargs="?", help="run once with this prompt, then exit")
-    p.add_argument("-m", "--model", default="qwen2.5-coder:7b", help="Ollama model tag")
+    p.add_argument("-m", "--model", default="qwen2.5-coder:7b", help="model name or Ollama tag")
     p.add_argument("-w", "--workspace", type=Path, default=Path.cwd())
-    p.add_argument("--host", default=DEFAULT_HOST, help="Ollama server URL")
+    p.add_argument(
+        "--host",
+        default=None,
+        help=(
+            f"model server URL (default: {DEFAULT_HOST} for ollama; required for "
+            "--api openai, including the version path, e.g. https://api.openai.com/v1)"
+        ),
+    )
+    p.add_argument(
+        "--api",
+        choices=APIS,
+        default="ollama",
+        help="wire format: ollama (local, default) or openai (any OpenAI-compatible server)",
+    )
+    p.add_argument(
+        "--api-key-env",
+        default=DEFAULT_API_KEY_ENV,
+        metavar="VAR",
+        help=(
+            "environment variable holding the API key for --api openai "
+            f"(default: {DEFAULT_API_KEY_ENV}); the key itself is never a flag"
+        ),
+    )
     p.add_argument(
         "--allow-shell",
         action="store_true",
@@ -60,6 +82,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.event_log and not args.prompt:
         print("error: --event-log requires a one-shot prompt", file=sys.stderr)
         return 1
+    host = args.host
+    if host is None:
+        if args.api != "ollama":
+            # No default: silently sending a prompt (and a key) to a server
+            # the user didn't name is worse than asking.
+            print("error: --api openai needs --host (e.g. https://api.openai.com/v1)", file=sys.stderr)
+            return 1
+        host = DEFAULT_HOST
+    llm_options = {}
+    if args.api != "ollama":
+        llm_options = {"api": args.api, "api_key_env": args.api_key_env}
     try:
         if args.prompt:
             if args.event_log:
@@ -69,32 +102,35 @@ def main(argv: list[str] | None = None) -> int:
                     args.prompt,
                     args.model,
                     workspace,
-                    args.host,
+                    host,
                     event_log_path=args.event_log,
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
+                    llm_options=llm_options,
                 )
             else:
                 run(
                     args.prompt,
                     args.model,
                     workspace,
-                    args.host,
+                    host,
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
+                    llm_options=llm_options,
                 )
         else:
             run_interactive(
                 args.model,
                 workspace,
-                args.host,
+                host,
                 allow_shell=args.allow_shell,
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
+                llm_options=llm_options,
             )
-    except OllamaError as e:
+    except LLMError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

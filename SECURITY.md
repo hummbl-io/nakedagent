@@ -12,4 +12,4 @@ You will receive a response within 48 hours. If the vulnerability is confirmed, 
 
 ## License
 
-Apache 2.0 â€” see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

@@ -51,6 +51,7 @@ def run_functional(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    llm_options: dict | None = None,
 ) -> AgentState:
     """Run `prompt` through the reducer-interleaved loop. Returns final state.
 
@@ -86,7 +87,7 @@ def run_functional(
     try:
         feed(AgentEvent("USER_INPUT", prompt))
         while not state.is_terminal and not state.suspended:
-            reply = llm_fn(list(state.history), model, host)
+            reply = llm_fn(list(state.history), model, host, **(llm_options or {}))
             actions = feed(AgentEvent("MODEL_REPLY", reply))
             if not actions:
                 feed(AgentEvent("TERMINATION", "MODEL_FINISHED"))

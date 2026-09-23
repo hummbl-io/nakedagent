@@ -98,8 +98,25 @@ traceback.
 
 ## Model backend (`nakedagent/llm.py`)
 
-Ollama's `/api/chat` only, `stream=False`. One `urllib.request.urlopen` call,
-one JSON parse. `ponytail:` comment in the source marks the streaming
+Two wire formats behind one `chat()`: Ollama's `/api/chat` (default) and the
+OpenAI-compatible `/chat/completions` shape (`--api openai`), both
+`stream=False`. One `urllib.request.urlopen` call, one JSON parse.
+
+The second format is how nakedagent reaches models too large to run locally.
+It is one protocol, not per-vendor clients: hosted APIs (OpenAI, Gemini's
+OpenAI endpoint, OpenRouter, Groq), self-hosted servers (vLLM, LM Studio,
+llama.cpp) and gateways all speak it, and so does Ollama at `/v1`. `--host`
+is the base URL including its version path; with `--api openai` there is no
+default host, so a prompt is never sent to a server the operator didn't
+name. The key is read from the environment variable named by
+`--api-key-env` (default `OPENAI_API_KEY`), never from a flag, so it stays out
+of shell history and process listings; an unset variable sends no auth
+header (local servers need none) and a 401/403 names the variable to check.
+
+It lives in the foundation rather than a plugin because the plugin seam
+substitutes tools, not the model call, and a small model is the case where a
+user most needs a way out. Errors from either format raise `LLMError`;
+`OllamaError` remains as an alias for existing imports. `ponytail:` comment in the source marks the streaming
 omission explicitly — upgrade path is NDJSON chunk parsing over
 `http.client`, no new dependency required, just more code, deferred until
 interactive latency is an actual complaint rather than a hypothetical one.
@@ -173,11 +190,11 @@ The plugin seam (`nakedagent/plugins.py`) is the omakase substitution
 mechanism — most of the items below are now *substitutions a user makes via
 a plugin*, not foundation work waiting to be done. See `DOCTRINE.md`.
 
-- **Cloud providers** (Anthropic/OpenAI/etc). Ollama-only was the explicit v1
-  scope decision — local-first, zero API-key friction for a first
-  `git clone && run`. Adding one is a new module in the same shape as
-  `llm.py`'s `chat()`, no architecture change. (Could be a plugin that
-  replaces the `llm.chat` call site, or a foundation module — TBD.)
+- **Vendor-native APIs** (Anthropic Messages, Gemini `generateContent`).
+  Hosted models are reachable today through `--api openai`; a native client
+  is only worth adding when it buys something the compatible endpoint
+  can't. Ollama stays the default: local-first, zero API-key friction for a
+  first `git clone && run`.
 - **Streaming output.** See above.
 - **Multi-fence-per-turn safety beyond "run each in order."** No rollback if
   call 2 of 3 fails after call 1 already mutated a file.
