@@ -13,16 +13,19 @@ Stdlib-only. No secrets in code — keys come from env at call time.
 Mapping (from mount-matrix + peer-review R2):
     ModelProvider.complete()          <- text-generation seam (Ollama,
                                          OpenRouter, CLI agents)
-    NoulGateEvaluator.evaluate_action <- decision seam (Jev, heuristics)
+    NoulGateEvaluator.route_action    <- decision seam (Jev, heuristics);
+                                         tri-state ALLOW/BLOCK/ESCALATE.
+                                         evaluate_action remains for
+                                         two-state compat callers.
     Jev does NOT fit ModelProvider: it evaluates decisions, it does not
     generate text. Generating and deciding are two protocols.
 
 Peer-review fixes applied (crab 4749f357):
     - Jev answers are {"answers": {"<q>": {"score"|"choice"|"noul": v}}} —
       index by question type key, not the value directly.
-    - (bool, float, str) has no third state: "abstain" cannot escalate, it
-      blocks. The abstention band collapses to the alarm boundary;
-      abstain_lo IS the effective threshold.
+    - Abstention band [abstain_lo, abstain_hi) routes ESCALATE — the
+      run suspends for a human verdict rather than silently blocking.
+      (The tri-state seam landed in schema v0.3.)
     - Fail-closed returns p=-1.0 (out-of-range sentinel) so a gate outage
       is distinguishable from a real verdict in ledger stats.
     - Gate judges the same content the tool executes: full content up to
@@ -101,14 +104,19 @@ class OpenRouterProvider:
 # --------------------------------------------------------------------------- #
 class JevNoulGate:
     """Jev-backed pre-execution gate. Maps a ToolAction to a typed `score`
-    question; p_risk >= abstain_lo blocks.
+    question and routes tri-state:
 
-    NOTE on the seam: evaluate_action returns (is_alarm, p, reason) — two
-    states only. There is no "escalate to human" third value; abstention
-    blocks the run. [abstain_lo, abstain_hi) is reported as an abstain-
-    block in the reason string so post-hoc audit can distinguish a band
-    stop from a confident block, but the effect on the run is identical.
-    True escalation routing is a caller-side concern.
+        p_risk >= abstain_hi          -> BLOCK   (confident stop)
+        abstain_lo <= p < abstain_hi  -> ESCALATE (suspend for human review)
+        p_risk <  abstain_lo          -> ALLOW
+        unreachable / no key          -> BLOCK   (fail-closed; outages never
+                                                  escalate — escalation is for
+                                  adjudicated uncertainty, not transport failure)
+
+    ESCALATE suspends the turn in the functional machine (non-terminal);
+    the human verdict re-enters as a USER_INPUT. `evaluate_action` is kept
+    for compat: ESCALATE maps to is_alarm=True there, since a two-state
+    caller's only safe interpretation of "held" is "do not dispatch".
     """
 
     provenance_class = LEDGER_NATIVE  # decision I/O is recorded as gate output
@@ -116,8 +124,8 @@ class JevNoulGate:
     def __init__(self, abstain_lo: float = 0.30, abstain_hi: float = 0.55,
                  api_key_env: str = "OPENROUTER_API_KEY",
                  model: str = JEV_MODEL, timeout_s: int = 60):
-        self.abstain_lo = abstain_lo   # effective alarm threshold
-        self.abstain_hi = abstain_hi   # label boundary: band vs confident block
+        self.abstain_lo = abstain_lo   # allow/escalate boundary
+        self.abstain_hi = abstain_hi   # escalate/block boundary
         self.api_key_env = api_key_env
         self.model = model
         self.timeout_s = timeout_s
@@ -150,11 +158,12 @@ class JevNoulGate:
             "content_truncated": True,
         }
 
-    def evaluate_action(self, action: ToolAction,
-                        workspace: Path) -> Tuple[bool, float, str]:
+    def route_action(self, action: ToolAction,
+                     workspace: Path) -> Tuple[str, float, str]:
+        """Tri-state routing: (route, p_risk, reason)."""
         key = os.environ.get(self.api_key_env)
         if not key:
-            return True, GATE_UNREACHABLE, "jev-gate: no API key (fail-closed)"
+            return "BLOCK", GATE_UNREACHABLE, "jev-gate: no API key (fail-closed)"
         state = {
             "tool": action.tool_name,
             "args": action.args,
@@ -181,22 +190,30 @@ class JevNoulGate:
             except urllib.error.HTTPError as e:
                 last_err = e
                 if e.code not in (429, 500, 502, 503, 504) or attempt:
-                    return True, GATE_UNREACHABLE, \
+                    return "BLOCK", GATE_UNREACHABLE, \
                         f"jev-gate HTTP {e.code} (fail-closed)"
                 time.sleep(2)
             except Exception as e:
-                return True, GATE_UNREACHABLE, \
+                return "BLOCK", GATE_UNREACHABLE, \
                     f"jev-gate unreachable (fail-closed): {e}"
         else:
-            return True, GATE_UNREACHABLE, \
+            return "BLOCK", GATE_UNREACHABLE, \
                 f"jev-gate unreachable (fail-closed): {last_err}"
         if p_risk >= self.abstain_hi:
-            return True, p_risk, f"jev block: p_risk={p_risk:.2f} >= {self.abstain_hi}"
+            return "BLOCK", p_risk, f"jev block: p_risk={p_risk:.2f} >= {self.abstain_hi}"
         if p_risk >= self.abstain_lo:
-            return True, p_risk, (
-                f"jev abstain-block: p_risk={p_risk:.2f} in "
-                f"[{self.abstain_lo},{self.abstain_hi}) — no escalate state at this seam")
-        return False, p_risk, f"jev allow: p_risk={p_risk:.2f} < {self.abstain_lo}"
+            return "ESCALATE", p_risk, (
+                f"jev abstain: p_risk={p_risk:.2f} in "
+                f"[{self.abstain_lo},{self.abstain_hi}) — suspended for human review")
+        return "ALLOW", p_risk, f"jev allow: p_risk={p_risk:.2f} < {self.abstain_lo}"
+
+    def evaluate_action(self, action: ToolAction,
+                        workspace: Path) -> Tuple[bool, float, str]:
+        """Two-state compat view: ESCALATE maps to is_alarm=True — a caller
+        without suspension semantics must still refuse to dispatch a held
+        action."""
+        route, p_risk, reason = self.route_action(action, workspace)
+        return route != "ALLOW", p_risk, reason
 
 
 # --------------------------------------------------------------------------- #
