@@ -180,16 +180,44 @@ class TestV02HeaderValidation(unittest.TestCase):
 
     def test_unknown_event_type_refused(self):
         with tempfile.TemporaryDirectory() as td:
-            # Forward-compat: a v0.3+ log with a type we cannot replay must
+            # Forward-compat: a future log with a type we cannot replay must
             # be refused, not silently skipped.
             path = self._write(
                 td, _header(),
-                '{"kind": "event", "seq": 1, "event_type": "ESCALATE", '
+                '{"kind": "event", "seq": 1, "event_type": "QUANTUM_LEAP", '
                 '"payload": "x", "state_hash": "h"}',
             )
             with self.assertRaises(EventLogError) as cm:
                 read_log(path)
-            self.assertIn("ESCALATE", str(cm.exception))
+            self.assertIn("QUANTUM_LEAP", str(cm.exception))
+
+    def test_escalate_event_accepted(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = self._write(
+                td, _header(),
+                '{"kind": "event", "seq": 1, "event_type": "ESCALATE", '
+                '"payload": "held", "state_hash": "h"}',
+            )
+            log = read_log(path)
+            self.assertEqual(log.events[0].event_type, "ESCALATE")
+
+    def test_v02_log_still_readable(self):
+        with tempfile.TemporaryDirectory() as td:
+            # v0.3 is additive (ESCALATE); a v0.2 log reads fine under it.
+            path = self._write(
+                td, _header(version="nakedagent.eventlog@v0.2"),
+                '{"kind": "event", "seq": 1, "event_type": "USER_INPUT", '
+                '"payload": "x", "state_hash": "h"}',
+            )
+            log = read_log(path)
+            self.assertEqual(log.header["version"], "nakedagent.eventlog@v0.2")
+
+    def test_v04_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = self._write(td, _header(version="nakedagent.eventlog@v0.4"))
+            with self.assertRaises(EventLogError) as cm:
+                read_log(path)
+            self.assertIn("unsupported", str(cm.exception))
 
 
 if __name__ == "__main__":

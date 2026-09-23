@@ -73,5 +73,63 @@ class TestFunctionalStateMachine(unittest.TestCase):
         self.assertEqual(t[3].prev_hash, t[2].state_hash)
 
 
+class TestEscalateSuspension(unittest.TestCase):
+    """ESCALATE is a non-terminal suspension, distinct from ALARM."""
+
+    def setUp(self):
+        self.genesis = AgentState.initial("System instructions", max_steps=10)
+
+    def test_escalate_suspends_not_terminates(self):
+        state, _ = agent_reducer(self.genesis, AgentEvent("USER_INPUT", "go"))
+        state, _ = agent_reducer(
+            state, AgentEvent("ESCALATE", "held: rm -rf /tmp/x", {"tool": "shell"})
+        )
+        self.assertTrue(state.suspended)
+        self.assertFalse(state.is_terminal)
+        self.assertEqual(state.step_count, 2)
+        # Escalation stays visible in history for the resumed model
+        self.assertIn("escalated", state.history[-1]["content"])
+
+    def test_user_input_lifts_suspension(self):
+        state, _ = agent_reducer(self.genesis, AgentEvent("USER_INPUT", "go"))
+        state, _ = agent_reducer(state, AgentEvent("ESCALATE", "held"))
+        self.assertTrue(state.suspended)
+        state, _ = agent_reducer(state, AgentEvent("USER_INPUT", "approved, proceed"))
+        self.assertFalse(state.suspended)
+        self.assertFalse(state.is_terminal)
+
+    def test_suspended_state_still_seals_events(self):
+        # Suspension is not terminal: subsequent events remain ledgered.
+        state, _ = agent_reducer(self.genesis, AgentEvent("USER_INPUT", "go"))
+        state, _ = agent_reducer(state, AgentEvent("ESCALATE", "held"))
+        state, _ = agent_reducer(state, AgentEvent("ALARM", "tripwire"))
+        self.assertTrue(state.is_terminal)
+        self.assertEqual(state.terminal_reason, "tripwire")
+        self.assertEqual(state.step_count, 3)
+
+    def test_escalate_replays_deterministically(self):
+        events = [
+            AgentEvent("USER_INPUT", "go"),
+            AgentEvent("MODEL_REPLY", "```shell\nrm -rf /x\n```"),
+            AgentEvent("ESCALATE", "held", {"tool": "shell", "p_risk": 0.7}),
+            AgentEvent("USER_INPUT", "denied"),
+            AgentEvent("MODEL_REPLY", "Understood, skipping."),
+        ]
+        state, ok = replay_trace("sys", events)
+        self.assertTrue(ok)
+        self.assertFalse(state.suspended)
+        self.assertFalse(state.is_terminal)
+        self.assertEqual(state.step_count, 5)
+
+    def test_budget_terminates_even_when_suspended(self):
+        state = AgentState.initial("s", max_steps=2)
+        state, _ = agent_reducer(state, AgentEvent("USER_INPUT", "go"))
+        state, _ = agent_reducer(state, AgentEvent("ESCALATE", "held"))
+        self.assertTrue(state.suspended)
+        state, _ = agent_reducer(state, AgentEvent("USER_INPUT", "approved"))
+        self.assertTrue(state.is_terminal)
+        self.assertEqual(state.terminal_reason, "BOUNDED_MAX_STEPS_REACHED")
+
+
 if __name__ == "__main__":
     unittest.main()

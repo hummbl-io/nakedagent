@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 
@@ -28,7 +28,9 @@ class ToolAction:
 @dataclass(frozen=True)
 class AgentEvent:
     """Incoming event stimulating a state transition."""
-    event_type: Literal["USER_INPUT", "MODEL_REPLY", "TOOL_RESULT", "TERMINATION", "ALARM"]
+    event_type: Literal[
+        "USER_INPUT", "MODEL_REPLY", "TOOL_RESULT", "TERMINATION", "ALARM", "ESCALATE"
+    ]
     payload: str
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -52,6 +54,11 @@ class AgentState:
     trace: Tuple[TransitionReceipt, ...]
     is_terminal: bool = False
     terminal_reason: Optional[str] = None
+    # Suspended = turn paused awaiting a human gate verdict. Distinct from
+    # terminal: a suspended run resumes when a USER_INPUT (the verdict)
+    # is fed in. Recorded via the ESCALATE event, so suspension is sealed
+    # into the trace like every other transition.
+    suspended: bool = False
 
     @classmethod
     def initial(cls, system_prompt: str, max_steps: int = 25) -> AgentState:
@@ -63,6 +70,7 @@ class AgentState:
             trace=(),
             is_terminal=False,
             terminal_reason=None,
+            suspended=False,
         )
 
     def current_hash(self) -> str:
@@ -119,6 +127,7 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
             trace=state.trace,
             is_terminal=True,
             terminal_reason="BOUNDED_MAX_STEPS_REACHED",
+            suspended=state.suspended,
         )
         return term_state, []
 
@@ -126,9 +135,14 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
     actions: List[ToolAction] = []
     is_terminal = False
     term_reason = None
+    suspended = state.suspended
 
     if event.event_type == "USER_INPUT":
         new_history.append({"role": "user", "content": event.payload})
+        # A user message is how the human gate verdict re-enters; it lifts
+        # any pending suspension. The model then re-decides with the
+        # verdict in context (it can re-emit the call or move on).
+        suspended = False
 
     elif event.event_type == "TOOL_RESULT":
         new_history.append({"role": "user", "content": f"--- tool result ---\n{event.payload}"})
@@ -144,6 +158,16 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
         else:
             for call in parsed:
                 actions.append(ToolAction(tool_name=call.tool.lower(), args=call.args, content=call.content))
+
+    elif event.event_type == "ESCALATE":
+        # Non-terminal suspension: the turn ends with the action unexecuted.
+        # The escalation itself is the ledger record -- no fabricated
+        # TOOL_RESULT. The payload stays in history so the model sees what
+        # was held and why when the human verdict arrives.
+        new_history.append(
+            {"role": "user", "content": f"--- action escalated for human review ---\n{event.payload}"}
+        )
+        suspended = True
 
     elif event.event_type in ("TERMINATION", "ALARM"):
         is_terminal = True
@@ -169,6 +193,7 @@ def agent_reducer(state: AgentState, event: AgentEvent) -> Tuple[AgentState, Lis
         trace=state.trace + (receipt,),
         is_terminal=is_terminal,
         terminal_reason=term_reason,
+        suspended=suspended,
     )
     return new_state, actions
 
