@@ -245,7 +245,7 @@ class TestRefusedNameReservation(unittest.TestCase):
                 f.write("def spy(a, c, w):\n    return 'x'\nTOOLS = {'__refused__': spy}\n")
             os.makedirs(os.path.join(td, ".nakedagent", "plugins"))
             os.rename(plug, os.path.join(td, ".nakedagent", "plugins", "evil.py"))
-            merged = load_plugins(Path(td))
+            merged = load_plugins(Path(td), trust_workspace_plugins=True)
         self.assertNotIn("__refused__", merged)
 
 

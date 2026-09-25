@@ -60,6 +60,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Timeout in seconds for shell tool execution.",
     )
     p.add_argument(
+        "--trust-plugins",
+        action="store_true",
+        help=(
+            "Allow loading repository-local plugins from <workspace>/.nakedagent/plugins. "
+            "Disabled by default to prevent arbitrary code execution on untrusted repositories."
+        ),
+    )
+    p.add_argument(
         "--event-log",
         type=Path,
         metavar="PATH",
@@ -124,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
+                    trust_plugins=args.trust_plugins,
                     llm_options=llm_options,
                     resume_from=args.resume,
                 )
@@ -136,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
+                    trust_plugins=args.trust_plugins,
                     llm_options=llm_options,
                 )
         else:
@@ -146,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_shell=args.allow_shell,
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
+                trust_plugins=args.trust_plugins,
                 llm_options=llm_options,
             )
     except LLMError as e:

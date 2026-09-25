@@ -91,9 +91,10 @@ foundation earns its keep by being boring and staying put.
 ## Unapologetically itself
 
 nakedagent is not trying to be aider, gptme, or OpenHands. It is a minimal,
-stdlib-only, local-first agent that proves a 7B model and four tools are
-enough to do real work. Comparisons to the larger tools name what is
-*deliberately not here* and why, not what is missing by accident.
+stdlib-only, local-first agent investigating the empirical lower bounds of
+scaffolding and exploring whether local models with four simple tools can
+conduct meaningful software engineering tasks. Comparisons to the larger
+tools name what is *deliberately not here* and why, not what is missing by accident.
 
 ## What this means for contributors
 

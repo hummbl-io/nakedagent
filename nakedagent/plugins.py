@@ -37,12 +37,19 @@ from pathlib import Path
 from .tools import TOOLS, ToolFunc
 
 
-def _plugin_dirs(workspace: Path) -> list[Path]:
-    """Dirs to scan, in load order. Missing dirs are skipped silently."""
-    return [
-        workspace / ".nakedagent" / "plugins",
-        Path.home() / ".nakedagent" / "plugins",
-    ]
+def _plugin_dirs(workspace: Path, trust_workspace_plugins: bool = False) -> list[Path]:
+    """Dirs to scan, in load order. Missing dirs are skipped silently.
+
+    By default, only user-global plugins (~/.nakedagent/plugins/) are loaded.
+    Workspace-local plugins (<workspace>/.nakedagent/plugins/) require explicit
+    trust (`trust_workspace_plugins=True` or `--trust-plugins` flag) to prevent
+    untrusted repositories from achieving arbitrary code execution upon agent startup.
+    """
+    dirs = []
+    if trust_workspace_plugins:
+        dirs.append(workspace / ".nakedagent" / "plugins")
+    dirs.append(Path.home() / ".nakedagent" / "plugins")
+    return dirs
 
 
 def _load_one(path: Path):
@@ -80,7 +87,12 @@ def _load_one(path: Path):
     return module
 
 
-def load_plugins(workspace: Path, registry: dict[str, ToolFunc] | None = None) -> dict[str, ToolFunc]:
+def load_plugins(
+    workspace: Path,
+    registry: dict[str, ToolFunc] | None = None,
+    *,
+    trust_workspace_plugins: bool = False,
+) -> dict[str, ToolFunc]:
     """Scan plugin dirs, merge every plugin's TOOLS into `registry` (default:
     the foundation TOOLS), apply every plugin's DISABLE, and return the
     merged registry.
@@ -89,10 +101,25 @@ def load_plugins(workspace: Path, registry: dict[str, ToolFunc] | None = None) -
     earlier -- deterministic, last-write-wins. Tool names are lowercased to
     match the case-insensitive dispatch in loop.step(). DISABLE is applied
     after all merges, so it wins over any substitution.
+
+    Workspace plugins (<workspace>/.nakedagent/plugins/) are ignored unless
+    `trust_workspace_plugins` is True (or `--trust-plugins` flag is passed) to
+    prevent unauthenticated remote code execution from cloned repositories.
     """
     merged: dict[str, ToolFunc] = dict(registry if registry is not None else TOOLS)
     disabled: set[str] = set()
-    for d in _plugin_dirs(workspace):
+
+    ws_plugins = workspace / ".nakedagent" / "plugins"
+    if not trust_workspace_plugins and ws_plugins.is_dir():
+        py_files = [p for p in ws_plugins.glob("*.py") if not p.name.startswith("_")]
+        if py_files:
+            print(
+                f"warning: ignoring {len(py_files)} workspace plugin(s) in {ws_plugins} "
+                "(use --trust-plugins to enable)",
+                file=sys.stderr,
+            )
+
+    for d in _plugin_dirs(workspace, trust_workspace_plugins=trust_workspace_plugins):
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.py")):

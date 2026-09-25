@@ -251,12 +251,13 @@ def add(a, b):
 <pre>$ python -m nakedagent.replay run.jsonl
 PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
 <p class="no-indent">The replay engine executes the reducer &delta; against the recorded event stream, computing state hashes deterministically. If the final hash matches the log, the run is mathematically certified to have satisfied the operational semantics of the agent reducer.</p>
+<p><em>Epistemic Scope:</em> Cryptographic replay certifies <strong>internal transcript causality and reducer determinism</strong> (&delta;(<i>S<sub>t</sub></i>, <i>E<sub>t</sub></i>) &rarr; <i>S<sub>t+1</sub></i>). It does not certify external semantic execution correctness or model immunity to prompt injection, which must remain defended via OS sandboxing.</p>
 
 <h2>4. The Omakase Doctrine</h2>
 <p class="no-indent">NakedAgent adopts an <em>Omakase</em> (``chef's choice'') design philosophy: providing curated, opinionated defaults that run out-of-the-box without decision fatigue, paired with a designed seam for customization.</p>
 
 <h3>4.1 The Plugin Seam</h3>
-<p class="no-indent">Extensibility requires no framework registration. Dropping a Python file into <code>.nakedagent/plugins/</code> (repo-local) or <code>~/.nakedagent/plugins/</code> (user-global) defining <code>TOOLS: dict</code> or <code>DISABLE: list</code> immediately modifies the agent's behavior.</p>
+<p class="no-indent">Extensibility requires no framework registration. Dropping a Python file into <code>.nakedagent/plugins/</code> (repo-local) or <code>~/.nakedagent/plugins/</code> (user-global) defining <code>TOOLS: dict</code> or <code>DISABLE: list</code> immediately modifies the agent's behavior. Workspace plugins are gated behind an explicit trust flag to protect the developer from malicious cloned repositories.</p>
 
 <h3>4.2 Dynamic Prompt Adaptation</h3>
 <p class="no-indent">Each tool function carries an intrinsic <code>.usage</code> attribute containing its Markdown example. When plugins are loaded at startup, the system prompt generator dynamically incorporates the active tool usage strings. Overriding a tool automatically updates its prompt documentation without manual prompt engineering. Furthermore, specifying <code>DISABLE = ['shell', 'write']</code> produces a provably read-only agent by pruning both dispatch and prompt surfaces.</p>
@@ -269,12 +270,12 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
   <li><strong>Zero-Dependency MCP Client:</strong> A stdlib-only JSON-RPC 2.0 client supporting the Model Context Protocol over stdio.</li>
 </ul>
 
-<h2>6. Empirical Evaluation</h2>
+<h2>6. Exploratory Pilot: Failure Modes under Minimal Scaffolding</h2>
 
 <h3>6.1 SWE-bench Lite Pilot Setup</h3>
-<p class="no-indent">We evaluated NakedAgent on SWE-bench Lite [1] using an NVIDIA RTX 3080 Ti (12 GB VRAM), local Ollama serving <code>gemma3:12b</code> at temperature 0, and Astropy benchmark instances (<code>-12907</code>, <code>-14182</code>, <code>-14365</code>). We compared against Mini-SWE-agent 2.4.6.</p>
+<p class="no-indent">We conducted an exploratory pilot on SWE-bench Lite [1] using an NVIDIA RTX 3080 Ti (12 GB VRAM), local Ollama serving <code>gemma3:12b</code>, and Astropy benchmark instances (<code>-12907</code>, <code>-14182</code>, <code>-14365</code>). We note that while mini-swe-agent ran at <i>T</i>=0, NakedAgent was evaluated under Ollama's default sampling temperature (&approx; 0.8), representing an uncontrolled exploratory variable.</p>
 
-<div class="caption">Table 1: SWE-bench Lite Pilot Trajectory Results</div>
+<div class="caption">Table 1: SWE-bench Lite Exploratory Pilot Trajectory Results</div>
 <table>
   <thead>
     <tr>
@@ -283,6 +284,7 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
       <th>14182</th>
       <th>14365</th>
       <th>Patches</th>
+      <th>Resolved</th>
     </tr>
   </thead>
   <tbody>
@@ -292,6 +294,7 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
       <td>BadRequest</td>
       <td>BadRequest</td>
       <td>0/3</td>
+      <td>0/3 (0%)</td>
     </tr>
     <tr>
       <td>A2: mini-swe-agent (text backticks)</td>
@@ -299,6 +302,7 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
       <td>LimitsExceeded</td>
       <td>FormatError</td>
       <td>0/3</td>
+      <td>0/3 (0%)</td>
     </tr>
     <tr>
       <td>B: NakedAgent (bash parity)</td>
@@ -306,6 +310,7 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
       <td>Invalid regex</td>
       <td>No edit</td>
       <td>0/3</td>
+      <td>0/3 (0%)</td>
     </tr>
     <tr>
       <td>C1: NakedAgent (raw usage)</td>
@@ -313,6 +318,7 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
       <td>Bracket bug</td>
       <td>Bracket bug</td>
       <td>0/3</td>
+      <td>0/3 (0%)</td>
     </tr>
     <tr>
       <td>C2: NakedAgent (CRLF pipe)</td>
@@ -320,13 +326,15 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
       <td>Patch applied</td>
       <td>Patch applied</td>
       <td>3/3*</td>
+      <td>0/3 (0%)</td>
     </tr>
     <tr>
       <td>C3: NakedAgent (binary write)</td>
-      <td>Clean 1-hunk</td>
+      <td>1-hunk patch</td>
       <td>No patch</td>
       <td>No patch</td>
-      <td>1/3</td>
+      <td>1/3 valid</td>
+      <td>0/3 (0%)</td>
     </tr>
   </tbody>
 </table>
@@ -340,10 +348,16 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...</pre>
   <li><strong>Placeholder Literal Hallucination (C1):</strong> When usage docs contained <code>&lt;cmd&gt;</code>, the model echoed angle brackets literally. Concrete usage examples eliminated this bug.</li>
   <li><strong>Cross-OS Line Endings (C2):</strong> Windows host pipes introduced CRLF characters into containerized Linux git repos, marking entire files as dirty. Enforcing binary stdin pipes restored clean diffs.</li>
   <li><strong>Single-Hunk Patching (C3):</strong> Binary I/O enabled Gemma 3 to localize and generate clean single-hunk diffs without external dependencies.</li>
+  <li><strong>Syntactic Compliance vs. Semantic Resolution:</strong> While C3 produced a syntactically clean 1-hunk patch on <code>astropy-12907</code>, test-suite evaluation revealed 7 unit test regressions, resulting in 0/3 resolved tasks (0%). Minimal scaffolding successfully removes harness friction, but semantic problem-solving remains bounded by local model weights.</li>
 </ol>
 
 <h2>7. Security Analysis</h2>
-<p class="no-indent">Eliminating third-party dependencies eliminates dependency confusion, typosquatting, and transitive supply-chain poisoning. Furthermore, shell commands undergo POSIX lexical splitting (<code>shlex.split</code>), defusing injection attacks via semicolons (<code>;</code>), pipelines (<code>|</code>), or substitutions (<code>$(...)</code>). File operations are constrained to authorized root directories.</p>
+<p class="no-indent">Eliminating third-party dependencies eliminates dependency confusion, typosquatting, and transitive supply-chain poisoning. However, runtime defense requires strict containment:</p>
+<ul>
+  <li><strong>Shell Hardening:</strong> Commands undergo POSIX lexical splitting (<code>shlex.split</code>), defusing injection attacks via semicolons (<code>;</code>), pipelines (<code>|</code>), or substitutions (<code>$(...)</code>). Automated runs enforce prefix allowlists.</li>
+  <li><strong>Plugin Gating:</strong> Workspace-local plugins in <code>.nakedagent/plugins/</code> are ignored by default and require explicit <code>--trust-plugins</code> opt-in, closing zero-click RCE vectors on untrusted repos.</li>
+  <li><strong>Protected Surfaces:</strong> The <code>write</code> and <code>patch</code> tools disallow modifying protected directories (<code>.git/</code>, <code>.nakedagent/</code>), and automated workloads require OS container sandboxing.</li>
+</ul>
 
 <h2>8. Related Work</h2>
 <p class="no-indent">SWE-agent [2] demonstrated that specialized agent interfaces improve benchmark scores. Aider [3] pioneered terminal-based pair programming with git search/replace hunks. Krineia [9] formulated append-only invariants for verifiable governance receipts. NakedAgent bridges these domains, providing a zero-dependency implementation with cryptographic replay verification.</p>

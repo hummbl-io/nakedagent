@@ -35,6 +35,30 @@ class TestPluginLoad(unittest.TestCase):
         merged = load_plugins(self.workspace)
         self.assertEqual(set(merged.keys()), set(TOOLS.keys()))
 
+    def test_workspace_plugins_ignored_by_default(self):
+        d = self.workspace / ".nakedagent" / "plugins"
+        d.mkdir(parents=True)
+        _write_plugin(d, "upper.py",
+            "def to_upper(args, content, workspace):\n"
+            "    return content.upper()\n"
+            "TOOLS = {'upper': to_upper}\n")
+        # By default without trust_workspace_plugins=True, workspace plugins must NOT load
+        merged = load_plugins(self.workspace)
+        self.assertNotIn("upper", merged)
+        self.assertEqual(set(merged.keys()), set(TOOLS.keys()))
+
+    def test_user_global_plugins_loaded_by_default(self):
+        # User-global ~/.nakedagent/plugins/ is trusted and loaded by default
+        home_plugins = Path(self._home.name) / ".nakedagent" / "plugins"
+        home_plugins.mkdir(parents=True)
+        _write_plugin(home_plugins, "global_tool.py",
+            "def g(args, content, workspace):\n"
+            "    return 'from-home'\n"
+            "TOOLS = {'global_tool': g}\n")
+        merged = load_plugins(self.workspace)
+        self.assertIn("global_tool", merged)
+        self.assertEqual(merged["global_tool"]("", "", self.workspace), "from-home")
+
     def test_plugin_tool_is_dispatchable(self):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
@@ -42,7 +66,7 @@ class TestPluginLoad(unittest.TestCase):
             "def to_upper(args, content, workspace):\n"
             "    return content.upper()\n"
             "TOOLS = {'upper': to_upper}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertIn("upper", merged)
         self.assertEqual(merged["upper"]("", "hi", self.workspace), "HI")
         # foundation tools still present
@@ -56,7 +80,7 @@ class TestPluginLoad(unittest.TestCase):
             "def ok(args, content, workspace):\n"
             "    return 'ok'\n"
             "TOOLS = {'ok': ok}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("broken", merged)
         self.assertIn("ok", merged)  # the good plugin still loaded
 
@@ -64,7 +88,7 @@ class TestPluginLoad(unittest.TestCase):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "notools.py", "x = 1\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertEqual(set(merged.keys()), set(TOOLS.keys()))
 
     def test_plugin_can_override_foundation_tool(self):
@@ -77,7 +101,7 @@ class TestPluginLoad(unittest.TestCase):
             "def safe(args, content, workspace):\n"
             "    return 'blocked by plugin'\n"
             "TOOLS = {'shell': safe}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertEqual(merged["shell"]("", "rm -rf /", self.workspace),
                          "blocked by plugin")
 
@@ -88,7 +112,7 @@ class TestPluginLoad(unittest.TestCase):
             "def h(args, content, workspace):\n"
             "    return 'should not load'\n"
             "TOOLS = {'hidden': h}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("hidden", merged)
 
     def test_tool_names_are_case_insensitive(self):
@@ -99,7 +123,7 @@ class TestPluginLoad(unittest.TestCase):
             "def f(args, content, workspace):\n"
             "    return 'r'\n"
             "TOOLS = {'MyTool': f}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertIn("mytool", merged)
 
 
@@ -127,7 +151,7 @@ class TestPluginDisable(unittest.TestCase):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "readonly.py", "DISABLE = ['shell', 'write']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("shell", merged)
         self.assertNotIn("write", merged)
         self.assertIn("read", merged)
@@ -141,7 +165,7 @@ class TestPluginDisable(unittest.TestCase):
             "    return 'r'\n"
             "TOOLS = {'upper': f}\n")
         _write_plugin(d, "disable_upper.py", "DISABLE = ['upper']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("upper", merged)
 
     def test_plugin_with_only_disable_is_valid(self):
@@ -150,7 +174,7 @@ class TestPluginDisable(unittest.TestCase):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "noshell.py", "DISABLE = ['shell']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("shell", merged)
         self.assertIn("read", merged)
 
@@ -164,14 +188,14 @@ class TestPluginDisable(unittest.TestCase):
             "    return 'replaced'\n"
             "TOOLS = {'shell': f}\n")
         _write_plugin(d, "noshell.py", "DISABLE = ['shell']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("shell", merged)
 
     def test_disable_is_case_insensitive(self):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "noshell.py", "DISABLE = ['SHELL']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace_plugins=True)
         self.assertNotIn("shell", merged)
 
 

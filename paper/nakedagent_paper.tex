@@ -162,6 +162,8 @@ PASS run.jsonl: verified 5 events; final hash 6d1e09...
 \end{lstlisting}
 The replay verifier re-executes the pure reducer $\delta(S_t, E_t)$ against the recorded tool results without initiating any network calls or model inferences. If the reconstructed Merkle state hash matches the terminal hash in the log, the execution is mathematically certified to have followed the reducer's operational semantics.
 
+\textit{Epistemic Scope}: Importantly, this cryptographic replay certifies \textbf{internal transcript causality and reducer determinism}---specifically, that the internal state transitions $\delta(S_t, E_t) \to S_{t+1}$ followed verified rules without offline transcript tampering. It does \textit{not} certify external semantic correctness, external environment isolation, or model resistance to prompt injection, which must remain defended by OS-level sandboxing.
+
 \section{The Omakase Extensibility Doctrine}
 
 \subsection{Defaults over Decisions}
@@ -193,35 +195,35 @@ For governed environments, NakedAgent incorporates the \textit{Sidekick Harness}
     \item \textbf{Zero-Dependency MCP Client}: NakedAgent includes a standard-library JSON-RPC 2.0 client supporting the Model Context Protocol (MCP) over \texttt{stdio}, enabling tool sharing across modern agent meshes without external SDKs.
 \end{itemize}
 
-\section{Empirical Evaluation: SWE-bench Lite Pilot}
+\section{Exploratory Pilot: Failure Modes of Local Models under Minimal Scaffolding}
 
 \subsection{Experimental Setup}
-To evaluate the efficacy and failure dynamics of minimal agent architectures under local inference, we conducted an empirical pilot on SWE-bench Lite~\cite{jimenez2024swebench}.
+To explore the failure dynamics, harness friction, and baseline capabilities of minimal agent architectures under local inference, we conducted an exploratory pilot on SWE-bench Lite~\cite{jimenez2024swebench}.
 \begin{itemize}
     \item \textbf{Hardware}: NVIDIA GeForce RTX 3080 Ti (12 GB VRAM), Docker Desktop (WSL2), AMD Ryzen CPU.
-    \item \textbf{Model}: Google \texttt{gemma3:12b} served locally via Ollama with 4-bit quantization and temperature set to 0.
+    \item \textbf{Model}: Google \texttt{gemma3:12b} served locally via Ollama with 4-bit quantization. Note that while mini-swe-agent was configured with temperature $T=0$, NakedAgent was evaluated under Ollama's default sampling temperature ($\approx 0.8$), which we note as an uncontrolled exploratory variable.
     \item \textbf{Instances}: SWE-bench Lite instances \texttt{astropy\_\_astropy-12907}, \texttt{-14182}, and \texttt{-14365}.
     \item \textbf{Baselines}: Mini-SWE-agent 2.4.6 (native tools mode vs. text-based backtick mode).
 \end{itemize}
 
 \subsection{Results and Observations}
-Table~\ref{tab:swebench} summarizes the comparative trajectories across configurations.
+Table~\ref{tab:swebench} summarizes the comparative trajectories across configurations. Crucially, across all tested configurations, the true ground-truth resolution rate was \textbf{0/3 resolved (0\%)}.
 
 \begin{table*}[t]
 \centering
-\caption{SWE-bench Lite Pilot Trajectory Results with Local Gemma 3 12B}
+\caption{SWE-bench Lite Exploratory Pilot Trajectory Results with Local Gemma 3 12B}
 \label{tab:swebench}
 \small
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccc}
 \toprule
-\textbf{Configuration} & \textbf{Astropy-12907} & \textbf{Astropy-14182} & \textbf{Astropy-14365} & \textbf{Valid Patches} \\
+\textbf{Configuration} & \textbf{Astropy-12907} & \textbf{Astropy-14182} & \textbf{Astropy-14365} & \textbf{Patches} & \textbf{Resolved} \\
 \midrule
-A1: mini-swe-agent (native tools) & BadRequest (No tool API) & BadRequest (No tool API) & BadRequest (No tool API) & 0/3 \\
-A2: mini-swe-agent (text backticks) & RepeatedFormatError (9 calls) & LimitsExceeded (30 calls) & RepeatedFormatError (11 calls) & 0/3 \\
-B: NakedAgent (bash-only parity) & Stopped after failed \texttt{sed} & Invalid \texttt{sed} regex & Found bug, explained, no edit & 0/3 \\
-C1: NakedAgent (system mode, raw) & Invalid (harness bracket bug) & Invalid (harness bracket bug) & Invalid (harness bracket bug) & 0/3 \\
-C2: NakedAgent (CRLF text pipe) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & 3/3 (invalid CRLF) \\
-C3: NakedAgent (binary write fix) & Clean 1-hunk patch generated & No patch (nudges exhausted) & No patch (nudges exhausted) & 1/3 patches \\
+A1: mini-swe-agent (native tools) & BadRequest (No tool API) & BadRequest (No tool API) & BadRequest (No tool API) & 0/3 & 0/3 (0\%) \\
+A2: mini-swe-agent (text backticks) & RepeatedFormatError (9 calls) & LimitsExceeded (30 calls) & RepeatedFormatError (11 calls) & 0/3 & 0/3 (0\%) \\
+B: NakedAgent (bash-only parity) & Stopped after failed \texttt{sed} & Invalid \texttt{sed} regex & Found bug, explained, no edit & 0/3 & 0/3 (0\%) \\
+C1: NakedAgent (system mode, raw) & Invalid (harness bracket bug) & Invalid (harness bracket bug) & Invalid (harness bracket bug) & 0/3 & 0/3 (0\%) \\
+C2: NakedAgent (CRLF text pipe) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & 3/3 (invalid CRLF) & 0/3 (0\%) \\
+C3: NakedAgent (binary write fix) & 1-hunk patch (7 regressions) & No patch (nudges exhausted) & No patch (nudges exhausted) & 1/3 valid & 0/3 (0\%) \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -234,6 +236,7 @@ The pilot revealed critical insights into the interaction between minimal scaffo
     \item \textbf{Placeholder Echoing (C1)}: In early trials, the tool usage prompt included abstract placeholders such as \texttt{<bash command>}. Gemma 3 literally echoed the angle brackets (\texttt{<git status>}), causing bash syntax errors. Replacing prompt placeholders with concrete, literal examples eliminated this error mode.
     \item \textbf{Host OS Newline Ingestion (C2)}: Running on Windows host systems communicating with Linux Docker containers resulted in Windows CRLF ($\backslash r \backslash n$) conversions over text pipes, causing git to treat entire files as modified. NakedAgent resolved this by enforcing binary streams across all tool I/O boundaries.
     \item \textbf{Localized Patching (C3)}: With binary I/O and concrete usage examples, NakedAgent enabled Gemma 3 to localize and generate clean single-hunk patches on complex Astropy files without external diff packages.
+    \item \textbf{Syntactic Compliance vs. Semantic Correctness}: Although configuration C3 generated a syntactically valid single-hunk patch on \texttt{astropy-12907}, test-suite evaluation revealed 7 unit test regressions, resulting in 0/3 resolved tasks. Minimal scaffolding effectively removes harness friction, but semantic problem-solving on complex issues remains bounded by local model parameters.
 \end{enumerate}
 
 \section{Security Analysis}
@@ -248,6 +251,9 @@ Because the shell tool is the most sensitive primitive, NakedAgent implements mu
     \item Arguments are tokenized using POSIX shell lexical parsing (\texttt{shlex.split}), preventing command-chaining injection attacks (such as semicolons \texttt{;}, logical operators \texttt{\&\&}, or command substitutions \texttt{\$(...)}).
     \item Path validation routines guarantee that file writes cannot escape designated workspace roots via directory traversal (\texttt{../../}).
 \end{itemize}
+
+\subsection{Plugin Gating and Protected Surfaces}
+Eliminating third-party dependencies does not eliminate environmental risks from untrusted repositories or ambient shell binaries. To prevent repository-drop code execution (where a cloned project includes malicious code in \texttt{.nakedagent/plugins/}), NakedAgent disables workspace-local plugins by default, requiring an explicit \texttt{--trust-plugins} CLI flag. Furthermore, the \texttt{write} and \texttt{patch} tools enforce protected surface boundaries preventing modifications to \texttt{.git/} or \texttt{.nakedagent/}, and automated production workloads are strictly recommended to execute within containerized sandboxes.
 
 \section{Related Work}
 \textbf{Coding Agents}: SWE-agent~\cite{yang2024sweagent} introduced specialized agent-computer interfaces (ACI) tailored for repository navigation. Aider~\cite{gauthier2023aider} popularized in-terminal pair programming with git-anchored search/replace editing. OpenHands~\cite{openhands2024} established a generalist agent runtime platform. NakedAgent distinguishes itself by proving that these core capabilities can be achieved without the 30+ package dependencies characteristic of existing systems.

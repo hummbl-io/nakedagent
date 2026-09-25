@@ -95,14 +95,16 @@ def _build_tools(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_plugins: bool = False,
 ) -> dict:
     """Load plugin tools and apply shell-policy hardening.
 
     Shell is a high-risk tool. Foundation `tool_shell` is policy-wrapped with
     explicit non-interactive allow-switching and allowlist checks to close the
-    trust gap in automation.
+    trust gap in automation. Workspace plugins are loaded only when
+    `trust_plugins` is True.
     """
-    tools = load_plugins(workspace)
+    tools = load_plugins(workspace, trust_workspace_plugins=trust_plugins)
     if tools.get("shell") is tool_shell:
         tools["shell"] = partial(
             tool_shell,
@@ -184,6 +186,7 @@ def run(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_plugins: bool = False,
     llm_options: dict | None = None,
 ) -> None:
     """One-shot: run `prompt` to completion (no further human input)."""
@@ -192,6 +195,7 @@ def run(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_plugins=trust_plugins,
     )
     messages = [
         {"role": "system", "content": _system_prompt(tools)},
@@ -208,6 +212,7 @@ def run_interactive(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_plugins: bool = False,
     llm_options: dict | None = None,
 ) -> None:
     """REPL: prompt the user for input whenever the agent has no tool calls left."""
@@ -216,6 +221,7 @@ def run_interactive(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_plugins=trust_plugins,
     )
     messages = [{"role": "system", "content": _system_prompt(tools)}]
     print(f"nakedagent -- workspace: {workspace} -- model: {model}")
