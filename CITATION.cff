@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use NakedAgent in your research or software, please cite it using the metadata below."
+title: "NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay"
+type: software
+authors:
+  - given-names: Reuben
+    family-names: Bowlby
+    orcid: "https://orcid.org/0009-0002-5620-1103"
+    affiliation: "HUMMBL, LLC"
+repository-code: "https://github.com/hummbl-io/nakedagent"
+url: "https://github.com/hummbl-io/nakedagent"
+license: MIT
+version: 0.1.0
+date-released: "2026-09-25"
+keywords:
+  - "autonomous-agents"
+  - "coding-agent"
+  - "zero-dependencies"
+  - "software-engineering"
+  - "tamper-evident"
+  - "replay-verification"
+  - "mealy-machine"
+  - "stdlib-only"
+preferred-citation:
+  type: article
+  title: "NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay"
+  authors:
+    - given-names: Reuben
+      family-names: Bowlby
+      orcid: "https://orcid.org/0009-0002-5620-1103"
+      affiliation: "HUMMBL, LLC"
+  year: 2026
+  publisher: "Zenodo"
+  notes: "Preprint published on Zenodo. Software repository: https://github.com/hummbl-io/nakedagent"
