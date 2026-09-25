@@ -51,6 +51,7 @@ def run_functional(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_plugins: bool = False,
     llm_options: dict | None = None,
     resume_from: Path | None = None,
 ) -> AgentState:
@@ -71,6 +72,7 @@ def run_functional(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_plugins=trust_plugins,
     )
     system_prompt = _system_prompt(registry)
 

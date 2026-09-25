@@ -1,0 +1,42 @@
+{
+  "title": "NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay",
+  "description": "Autonomous software engineering agents driven by Large Language Models (LLMs) increasingly rely on expansive, multi-tiered dependency trees. Mainstream agent scaffolds (e.g., SWE-agent, Aider, OpenHands) import between 20 and 50+ third-party packages to facilitate HTTP communication, terminal UI rendering, provider protocol abstraction, and telemetry. While feature-rich, this architectural paradigm introduces substantial supply-chain vulnerability attack surfaces, runtime version fragility, and heavy deployment footprints. In this paper, we introduce NakedAgent, an autonomous coding agent engineered under a strict zero-runtime-dependency constraint: it executes entirely upon standard Python 3.10+ library modules (urllib, json, subprocess, re, and hashlib). NakedAgent decouples tool invocation from proprietary JSON function-calling schemas by utilizing a Markdown fenced code-block protocol, enabling consistent tool use across local models (such as Qwen 2.5-Coder and Gemma 3) and hosted endpoints. To establish auditability and non-repudiation, we model agent execution as a pure Mealy state machine reducer (S_t, E_t) -> (S_{t+1}, A_{t+1}), combined with SHA-256 Merkle-linked state hashing recorded in an append-only JSON Lines (JSONL) event log. This architecture enables zero-inference offline replay verification, validating tool execution histories without querying an LLM. We present empirical findings from a SWE-bench Lite pilot with local 12B models, delineating scaffold-induced failure modes from model-inherent reasoning bounds. Finally, we formulate the Omakase extensibility doctrine, demonstrating how clean tool substitution seams empower extensible agent behaviors without framework bloat.",
+  "creators": [
+    {
+      "name": "Bowlby, Reuben",
+      "orcid": "0009-0002-5620-1103",
+      "affiliation": "HUMMBL, LLC"
+    }
+  ],
+  "license": "CC-BY-4.0",
+  "keywords": [
+    "autonomous coding agents",
+    "zero dependencies",
+    "software engineering",
+    "standard library",
+    "tamper-evident audit logs",
+    "mealy state machine",
+    "offline replay",
+    "merkle state hash",
+    "SWE-bench",
+    "local LLM inference",
+    "Ollama",
+    "omakase design"
+  ],
+  "related_identifiers": [
+    {
+      "scheme": "url",
+      "identifier": "https://github.com/hummbl-io/nakedagent",
+      "relation": "isSupplementTo"
+    },
+    {
+      "scheme": "url",
+      "identifier": "https://pypi.org/project/nakedagent/",
+      "relation": "isIdenticalTo"
+    }
+  ],
+  "access_right": "open",
+  "upload_type": "publication",
+  "publication_type": "preprint",
+  "language": "eng"
+}

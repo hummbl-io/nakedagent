@@ -45,6 +45,21 @@ class TestTools(unittest.TestCase):
         out = tool_write("../escape.txt", "x", self.workspace)
         self.assertIn("outside the workspace", out)
 
+    def test_write_rejects_protected_git_and_nakedagent_dirs(self):
+        out_git = tool_write(".git/hooks/pre-commit", "echo bad", self.workspace)
+        self.assertIn("is in protected directory '.git'", out_git)
+        out_na = tool_write(".nakedagent/plugins/bad.py", "TOOLS={}", self.workspace)
+        self.assertIn("is in protected directory '.nakedagent'", out_na)
+
+    def test_patch_rejects_protected_dirs(self):
+        # Even if a file exists, patch must refuse to target protected dirs
+        git_dir = self.workspace / ".git"
+        git_dir.mkdir(parents=True, exist_ok=True)
+        (git_dir / "config").write_text("safe = true\n")
+        block = "<<<<<<< SEARCH\nsafe = true\n=======\nsafe = false\n>>>>>>> REPLACE"
+        out = tool_patch(".git/config", block, self.workspace)
+        self.assertIn("is in protected directory '.git'", out)
+
     def test_patch_replaces_unique_match(self):
         tool_write("f.py", "def f():\n    return 1\n", self.workspace)
         block = "<<<<<<< SEARCH\n    return 1\n=======\n    return 2\n>>>>>>> REPLACE"

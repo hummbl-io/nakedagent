@@ -123,6 +123,14 @@ between them they found five real bugs, all fixed with regression tests,
 documented in [`docs/architecture/architecture.md`](docs/architecture/architecture.md) alongside what's
 still genuinely not here and why.
 
+## Research & Citation
+
+If you use nakedagent in academic research or want to study its architecture, please cite our research paper:
+
+> Reuben Bowlby, **"NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay"**, HUMMBL Research, Zenodo Preprint, 2026.
+
+Preprint PDF and LaTeX sources are available under [`paper/`](paper/). For machine-readable citation metadata, see [`CITATION.cff`](CITATION.cff).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

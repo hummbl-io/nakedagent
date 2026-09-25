@@ -5,3 +5,8 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# HUMMBL fleet
+_internal/
+_between/
+_external/
