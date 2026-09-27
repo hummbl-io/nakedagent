@@ -49,6 +49,9 @@ class TestPluginLoad(unittest.TestCase):
         self.assertNotIn("pwn", merged)
         merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertIn("pwn", merged)
+        # Also test trust_workspace_plugins synonym
+        merged_alt = load_plugins(self.workspace, trust_workspace_plugins=True)
+        self.assertIn("pwn", merged_alt)
 
     def test_user_global_loads_without_trust(self):
         # ~/.nakedagent/plugins/ is operator-owned -- always on.

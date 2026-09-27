@@ -198,9 +198,9 @@ def run(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
-    llm_options: dict | None = None,
     trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
+    llm_options: dict | None = None,
 ) -> None:
     """One-shot: run `prompt` to completion (no further human input)."""
     tools = _build_tools(
@@ -226,9 +226,9 @@ def run_interactive(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
-    llm_options: dict | None = None,
     trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
+    llm_options: dict | None = None,
 ) -> None:
     """REPL: prompt the user for input whenever the agent has no tool calls left."""
     tools = _build_tools(

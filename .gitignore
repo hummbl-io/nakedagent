@@ -6,5 +6,10 @@ build/
 dist/
 .venv/
 
+# HUMMBL fleet
+_internal/
+_between/
+_external/
+
 # nakedagent runtime state (audit logs, workspace plugins) -- never commit
 .nakedagent/

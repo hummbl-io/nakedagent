@@ -178,8 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
                 llm_options=llm_options,
-                trust_plugins=args.trust_plugins,
-                trust_workspace_plugins=args.trust_workspace_plugins,
+                **plugin_trust,
             )
     except LLMError as e:
         print(f"error: {e}", file=sys.stderr)
