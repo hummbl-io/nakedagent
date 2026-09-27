@@ -1,5 +1,7 @@
 # nakedagent
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23001340.svg)](https://doi.org/10.5281/zenodo.23001340)
+
 A coding agent with **zero runtime dependencies**. `pip install`-free by
 construction: `python -m nakedagent` runs on a stock Python 3.10+ interpreter,
 nothing else.

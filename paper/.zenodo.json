@@ -23,6 +23,11 @@
     "Ollama",
     "omakase design"
   ],
+  "communities": [
+    {
+      "identifier": "hummbl-research-institute"
+    }
+  ],
   "related_identifiers": [
     {
       "scheme": "url",
