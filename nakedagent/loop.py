@@ -10,15 +10,15 @@ contains a tool call.
 
 from __future__ import annotations
 
-from functools import partial
 import sys
+from functools import partial
 from pathlib import Path
 
 from . import llm
 from .llm import DEFAULT_HOST
+from .plugins import load_plugins
 from .toolcall import parse
 from .tools import TOOLS, tool_shell
-from .plugins import load_plugins
 
 MAX_STEPS = 25  # tool-call rounds per human turn, before handing back control
 
@@ -95,23 +95,35 @@ def _build_tools(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
 ) -> dict:
     """Load plugin tools and apply shell-policy hardening.
 
     Shell is a high-risk tool. Foundation `tool_shell` is policy-wrapped with
     explicit non-interactive allow-switching and allowlist checks to close the
-    trust gap in automation. Workspace plugins are loaded only when
-    `trust_plugins` is True.
+    trust gap in automation.
+
+    `trust_plugins` and `trust_workspace_plugins` are two spellings of the
+    same workspace-plugin opt-in (one name per merged branch); either is
+    sufficient to load `<workspace>/.nakedagent/plugins/`.
     """
-    tools = load_plugins(workspace, trust_workspace_plugins=trust_plugins)
+    tools = load_plugins(
+        workspace,
+        trust_workspace=trust_workspace_plugins or trust_plugins,
+    )
     if tools.get("shell") is tool_shell:
-        tools["shell"] = partial(
+        wrapped = partial(
             tool_shell,
             allow_shell=allow_shell,
             shell_allowlist=shell_allowlist,
             shell_timeout=shell_timeout,
         )
+        # functools.partial drops function attributes; copy .usage so the
+        # system prompt keeps the shell fenced-block example instead of
+        # demoting shell to the name-only "Additional tools" list.
+        wrapped.usage = tool_shell.usage
+        tools["shell"] = wrapped
     return tools
 
 
@@ -186,6 +198,7 @@ def run(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
     llm_options: dict | None = None,
 ) -> None:
@@ -195,6 +208,7 @@ def run(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_workspace_plugins=trust_workspace_plugins,
         trust_plugins=trust_plugins,
     )
     messages = [
@@ -212,6 +226,7 @@ def run_interactive(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
+    trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
     llm_options: dict | None = None,
 ) -> None:
@@ -221,6 +236,7 @@ def run_interactive(
         allow_shell=allow_shell,
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
+        trust_workspace_plugins=trust_workspace_plugins,
         trust_plugins=trust_plugins,
     )
     messages = [{"role": "system", "content": _system_prompt(tools)}]

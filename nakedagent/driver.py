@@ -51,14 +51,16 @@ def run_functional(
     allow_shell: bool = False,
     shell_allowlist: tuple[str, ...] = (),
     shell_timeout: int = 120,
-    trust_plugins: bool = False,
     llm_options: dict | None = None,
     resume_from: Path | None = None,
+    trust_plugins: bool = False,
+    trust_workspace_plugins: bool = False,
 ) -> AgentState:
     """Run `prompt` through the reducer-interleaved loop. Returns final state.
 
     `llm_fn` and `tools` are injectable so tests and replay experiments can
-    swap the effect layer without monkeypatching module globals.
+    swap the effect layer without monkeypatching module globals. `llm_options`
+    reaches only the model call (api, api_key_env) as keyword arguments.
 
     `resume_from` re-opens a suspended event log instead of starting a
     fresh run: the recorded events are replayed through the reducer with
@@ -66,6 +68,10 @@ def run_functional(
     source), the trailer is replaced, and `prompt` enters as the human
     verdict that lifts the suspension. `event_log_path` must equal
     `resume_from` — resuming writes back to the same file.
+
+    `trust_plugins` / `trust_workspace_plugins` are two spellings of the same
+    workspace-plugin opt-in (the merged branches named it differently);
+    either one loads `<workspace>/.nakedagent/plugins/` via `_build_tools`.
     """
     registry = tools if tools is not None else _build_tools(
         workspace,
@@ -73,6 +79,7 @@ def run_functional(
         shell_allowlist=shell_allowlist,
         shell_timeout=shell_timeout,
         trust_plugins=trust_plugins,
+        trust_workspace_plugins=trust_workspace_plugins,
     )
     system_prompt = _system_prompt(registry)
 
@@ -104,6 +111,8 @@ def run_functional(
         max_steps = state.max_steps
         log = open_resumed_log(resume_from, parsed)
     else:
+        # v0.4 genesis binds the declared policy surface; replay.verify
+        # recomputes the same frame from the log header.
         state = AgentState.initial(
             system_prompt, max_steps=max_steps,
             policy={"model": model, "workspace": str(workspace), "extra": {}},
@@ -119,7 +128,11 @@ def run_functional(
 
     def feed(event: AgentEvent) -> list:
         nonlocal state
-        if state.is_terminal or state.step_count >= state.max_steps or (state.suspended and event.event_type != "USER_INPUT"):
+        if (state.is_terminal or state.step_count >= state.max_steps
+                or (state.suspended and event.event_type != "USER_INPUT")):
+            # Fail closed: an event the reducer would drop must never be
+            # logged — a ledger line without a state transition breaks the
+            # replay contract and would record an effect slot that never ran.
             raise RuntimeError("cannot admit an event after terminal state or max_steps")
         state, actions = agent_reducer(state, event)
         if log is not None:
@@ -132,7 +145,8 @@ def run_functional(
             # A reply needs one admission slot before the model effect.
             if state.step_count >= state.max_steps:
                 break
-            reply = llm_fn([dict(message) for message in state.history], model, host, **(llm_options or {}))
+            reply = llm_fn([dict(message) for message in state.history],
+                           model, host, **(llm_options or {}))
             actions = feed(AgentEvent("MODEL_REPLY", reply))
             if state.is_terminal:
                 break
@@ -140,7 +154,10 @@ def run_functional(
                 feed(AgentEvent("TERMINATION", "MODEL_FINISHED"))
                 break
             for act in actions:
-                # Reserve the TOOL_RESULT admission slot before execution.
+                # Pre-dispatch guard: an effect must never execute when its
+                # TOOL_RESULT could not be ledgered -- the reducer ignores
+                # events on a terminal/exhausted state, so dispatching first
+                # would run the action with no corresponding ledger entry.
                 if state.is_terminal or state.step_count >= state.max_steps:
                     break
                 result = _dispatch(registry, act, workspace)

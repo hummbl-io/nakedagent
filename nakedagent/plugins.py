@@ -13,8 +13,14 @@ them. DISABLE is applied after all TOOLS merges, so it wins over any
 substitution, including a plugin that both defines and disables a name.
 
 Search order (later dirs win, so user-local overrides repo-local):
-  1. <workspace>/.nakedagent/plugins/   -- checked first
+  1. <workspace>/.nakedagent/plugins/   -- only when trust_workspace is set
   2. ~/.nakedagent/plugins/              -- checked second, overrides (1)
+
+Workspace plugins are OFF by default: running `python -m nakedagent` in an
+untrusted clone must not execute that repo's Python with the operator's
+privileges (clone-and-run is a primary use case). Pass
+`--trust-workspace-plugins` (or `trust_workspace=True` here) to enable them.
+The user-global dir is operator-owned and always loads.
 
 A plugin file is any `*.py` in those dirs. It must define a module-level
 `TOOLS: dict[str, ToolFunc]` and/or `DISABLE: list[str]`. Anything else in
@@ -37,19 +43,30 @@ from pathlib import Path
 from .tools import TOOLS, ToolFunc
 
 
-def _plugin_dirs(workspace: Path, trust_workspace_plugins: bool = False) -> list[Path]:
+def _plugin_dirs(workspace: Path, trust_workspace: bool = False) -> list[Path]:
     """Dirs to scan, in load order. Missing dirs are skipped silently.
 
-    By default, only user-global plugins (~/.nakedagent/plugins/) are loaded.
-    Workspace-local plugins (<workspace>/.nakedagent/plugins/) require explicit
-    trust (`trust_workspace_plugins=True` or `--trust-plugins` flag) to prevent
-    untrusted repositories from achieving arbitrary code execution upon agent startup.
+    The workspace dir is included only when trust_workspace is set --
+    repo-local plugins run with the operator's privileges, so they need an
+    explicit opt-in.
     """
     dirs = []
-    if trust_workspace_plugins:
+    if trust_workspace:
         dirs.append(workspace / ".nakedagent" / "plugins")
     dirs.append(Path.home() / ".nakedagent" / "plugins")
     return dirs
+
+
+def _resolve_trust(trust_workspace: bool, trust_workspace_plugins: bool | None) -> bool:
+    """One workspace-plugin opt-in, two keyword spellings.
+
+    `trust_workspace` is the name callers on main use; `trust_workspace_plugins`
+    is the name the functional-lane branch used (matching the CLI flag
+    `--trust-workspace-plugins`). Both name the same switch, so either one
+    enables the workspace dir -- treat them as cumulative opt-ins, not
+    alternatives to validate against each other.
+    """
+    return bool(trust_workspace) or bool(trust_workspace_plugins)
 
 
 def _load_one(path: Path):
@@ -91,7 +108,8 @@ def load_plugins(
     workspace: Path,
     registry: dict[str, ToolFunc] | None = None,
     *,
-    trust_workspace_plugins: bool = False,
+    trust_workspace: bool = False,
+    trust_workspace_plugins: bool | None = None,
 ) -> dict[str, ToolFunc]:
     """Scan plugin dirs, merge every plugin's TOOLS into `registry` (default:
     the foundation TOOLS), apply every plugin's DISABLE, and return the
@@ -102,24 +120,15 @@ def load_plugins(
     match the case-insensitive dispatch in loop.step(). DISABLE is applied
     after all merges, so it wins over any substitution.
 
-    Workspace plugins (<workspace>/.nakedagent/plugins/) are ignored unless
-    `trust_workspace_plugins` is True (or `--trust-plugins` flag is passed) to
-    prevent unauthenticated remote code execution from cloned repositories.
+    `trust_workspace` controls whether `<workspace>/.nakedagent/plugins/` is
+    scanned at all; it defaults off because workspace plugins are arbitrary
+    repo-controlled code running with the operator's privileges.
+    `trust_workspace_plugins` is the same opt-in under the longer name the
+    CLI flag uses -- either spelling enables the workspace dir.
     """
     merged: dict[str, ToolFunc] = dict(registry if registry is not None else TOOLS)
     disabled: set[str] = set()
-
-    ws_plugins = workspace / ".nakedagent" / "plugins"
-    if not trust_workspace_plugins and ws_plugins.is_dir():
-        py_files = [p for p in ws_plugins.glob("*.py") if not p.name.startswith("_")]
-        if py_files:
-            print(
-                f"warning: ignoring {len(py_files)} workspace plugin(s) in {ws_plugins} "
-                "(use --trust-plugins to enable)",
-                file=sys.stderr,
-            )
-
-    for d in _plugin_dirs(workspace, trust_workspace_plugins=trust_workspace_plugins):
+    for d in _plugin_dirs(workspace, _resolve_trust(trust_workspace, trust_workspace_plugins)):
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.py")):

@@ -1,3 +1,5 @@
+"""nakedagent -- a zero-dependency terminal coding agent."""
+
 from __future__ import annotations
 
 import argparse
@@ -63,8 +65,19 @@ def main(argv: list[str] | None = None) -> int:
         "--trust-plugins",
         action="store_true",
         help=(
-            "Allow loading repository-local plugins from <workspace>/.nakedagent/plugins. "
-            "Disabled by default to prevent arbitrary code execution on untrusted repositories."
+            "Load <workspace>/.nakedagent/plugins/*.py at startup. "
+            "Disabled by default to prevent arbitrary code execution on "
+            "untrusted repositories. Alias of --trust-workspace-plugins."
+        ),
+    )
+    p.add_argument(
+        "--trust-workspace-plugins",
+        action="store_true",
+        help=(
+            "Load <workspace>/.nakedagent/plugins/*.py at startup. Off by "
+            "default: workspace plugins are repo-controlled code running with "
+            "your privileges. Only set this in workspaces you trust. "
+            "User-global ~/.nakedagent/plugins/ always loads."
         ),
     )
     p.add_argument(
@@ -118,9 +131,17 @@ def main(argv: list[str] | None = None) -> int:
     llm_options = {}
     if args.api != "ollama":
         llm_options = {"api": args.api, "api_key_env": args.api_key_env}
+    # Plugin trust: two flag spellings, one opt-in. `trust_plugins` always
+    # rides along; `trust_workspace_plugins` is forwarded only when a trust
+    # flag was actually given -- downstream defaults govern otherwise.
+    plugin_trust: dict = {"trust_plugins": args.trust_plugins}
+    if args.trust_plugins or args.trust_workspace_plugins:
+        plugin_trust["trust_workspace_plugins"] = args.trust_workspace_plugins
     try:
         if args.prompt:
             if args.event_log or args.resume:
+                # Deferred import keeps `nakedagent.driver.run_functional`
+                # patchable at call time (the CLI tests mock it there).
                 from .driver import run_functional
 
                 run_functional(
@@ -132,9 +153,9 @@ def main(argv: list[str] | None = None) -> int:
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
-                    trust_plugins=args.trust_plugins,
                     llm_options=llm_options,
                     resume_from=args.resume,
+                    **plugin_trust,
                 )
             else:
                 run(
@@ -145,8 +166,8 @@ def main(argv: list[str] | None = None) -> int:
                     allow_shell=args.allow_shell,
                     shell_allowlist=shell_allowlist,
                     shell_timeout=args.shell_timeout,
-                    trust_plugins=args.trust_plugins,
                     llm_options=llm_options,
+                    **plugin_trust,
                 )
         else:
             run_interactive(
@@ -156,8 +177,8 @@ def main(argv: list[str] | None = None) -> int:
                 allow_shell=args.allow_shell,
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
-                trust_plugins=args.trust_plugins,
                 llm_options=llm_options,
+                **plugin_trust,
             )
     except LLMError as e:
         print(f"error: {e}", file=sys.stderr)
