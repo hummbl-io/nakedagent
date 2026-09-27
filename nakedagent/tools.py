@@ -299,6 +299,21 @@ def tool_read(args: str, content: str, workspace: Path) -> str:
     return _truncate(target.read_text(encoding="utf-8", errors="replace"))
 
 
+_PROTECTED_DIR_NAMES = {".git", ".nakedagent"}
+
+
+def _is_protected_target(target: Path, workspace: Path) -> tuple[bool, str]:
+    """Check if target path is in a protected system directory."""
+    try:
+        rel = target.resolve().relative_to(workspace.resolve())
+    except ValueError:
+        return True, "outside workspace"
+    parts = rel.parts
+    if parts and parts[0] in _PROTECTED_DIR_NAMES:
+        return True, parts[0]
+    return False, ""
+
+
 def tool_write(args: str, content: str, workspace: Path) -> str:
     path = args.strip()
     if not path:
@@ -306,6 +321,9 @@ def tool_write(args: str, content: str, workspace: Path) -> str:
     target = (workspace / path).resolve()
     if not target.is_relative_to(workspace.resolve()):
         return f"Error: {path} is outside the workspace."
+    protected, reason = _is_protected_target(target, workspace)
+    if protected:
+        return f"Error: {path} is in protected directory '{reason}'."
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return f"Wrote {len(content)} chars to {path}."
@@ -326,6 +344,9 @@ def tool_patch(args: str, content: str, workspace: Path) -> str:
     target = (workspace / path).resolve()
     if not target.is_relative_to(workspace.resolve()):
         return f"Error: {path} is outside the workspace."
+    protected, reason = _is_protected_target(target, workspace)
+    if protected:
+        return f"Error: {path} is in protected directory '{reason}'."
     if not target.exists():
         return f"Error: {path} does not exist. Use write to create it."
 

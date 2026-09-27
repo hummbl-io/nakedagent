@@ -1,0 +1,38 @@
+{
+  "title": "NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay",
+  "description": "NakedAgent is a minimalist coding agent with zero third-party runtime dependencies, running strictly on stock Python 3.10+ standard-library primitives (urllib, json, subprocess, re). It demonstrates that a lightweight local or hosted language model combined with four foundation tools (shell, read, write, patch), Markdown code fence tool parsing, and an omakase plugin seam can execute autonomous code generation and repair loops without supply-chain risk. NakedAgent formalizes agentic execution as a pure Mealy state machine reducer (State, Event) -> (State, Actions) coupled with SHA-256 Merkle chain state hashing and an append-only JSONL event log, enabling tamper-evident receipts and deterministic offline replay verification with zero model inferences.",
+  "creators": [
+    {
+      "name": "Bowlby, Reuben",
+      "orcid": "0009-0002-5620-1103",
+      "affiliation": "HUMMBL, LLC"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "autonomous coding agent",
+    "zero dependencies",
+    "stdlib-only",
+    "software engineering",
+    "tamper-evident audit log",
+    "mealy machine",
+    "offline replay",
+    "merkle state hash",
+    "SWE-bench",
+    "omakase design"
+  ],
+  "related_identifiers": [
+    {
+      "scheme": "url",
+      "identifier": "https://github.com/hummbl-io/nakedagent",
+      "relation": "isSupplementTo"
+    },
+    {
+      "scheme": "url",
+      "identifier": "https://pypi.org/project/nakedagent/",
+      "relation": "isIdenticalTo"
+    }
+  ],
+  "access_right": "open",
+  "upload_type": "software"
+}
