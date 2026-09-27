@@ -72,6 +72,28 @@ class TestThinkingDisabled(unittest.TestCase):
         sent = json.loads(mock_urlopen.call_args[0][0].data)
         self.assertIs(sent["think"], False)
 
+    @patch("urllib.request.urlopen")
+    def test_temperature_goes_in_ollama_options(self, mock_urlopen):
+        import json
+
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"message": {"content": "ok"}}'
+        )
+        chat([], "model", host="http://localhost:11434", temperature=0)
+        sent = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual(sent["options"], {"temperature": 0})
+
+    @patch("urllib.request.urlopen")
+    def test_temperature_absent_by_default(self, mock_urlopen):
+        import json
+
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = (
+            b'{"message": {"content": "ok"}}'
+        )
+        chat([], "model", host="http://localhost:11434")
+        sent = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertNotIn("options", sent)
+
 
 class TestOpenAICompatible(unittest.TestCase):
     """Regression for issue #5: the squash-merge of #1 reverted #4 and left
