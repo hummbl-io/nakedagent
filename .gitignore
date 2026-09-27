@@ -13,3 +13,9 @@ _external/
 
 # nakedagent runtime state (audit logs, workspace plugins) -- never commit
 .nakedagent/
+
+# LaTeX auxiliary
+*.aux
+*.blg
+*.log
+*.out

@@ -1,0 +1,65 @@
+\begin{thebibliography}{10}
+
+\bibitem{gptme2023}
+Erik Bj{\"a}reholt.
+\newblock gptme: A personal ai assistant in your terminal.
+\newblock \url{https://github.com/ErikBjare/gptme}, 2023.
+
+\bibitem{bowlby2026krineia}
+Reuben Bowlby.
+\newblock Append-only as proof: A formal account of governance sovereignty in
+  ai audit systems.
+\newblock {\em Zenodo Preprint}, 2026.
+
+\bibitem{gauthier2023aider}
+Paul Gauthier.
+\newblock Aider: Ai pair programming in your terminal.
+\newblock \url{https://github.com/paul-gauthier/aider}, 2023.
+
+\bibitem{jimenez2024swebench}
+Carlos~E Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir
+  Press, and Karthik Narasimhan.
+\newblock Swe-bench: Can language models resolve real-world github issues?
+\newblock {\em International Conference on Learning Representations (ICLR)},
+  2024.
+
+\bibitem{ladisa2023supplychain}
+Piergiorgio Ladisa, Henrik Plate, Matias Martinez, and Jean-R{\'e}my Falleri.
+\newblock Risk taxonomy for open source software supply chains.
+\newblock {\em IEEE Transactions on Software Engineering}, 2023.
+
+\bibitem{ohm2020supplychain}
+Marc Ohm, Henrik Plate, Arnold Sykosch, and Michael Meier.
+\newblock Backstabber's knife collection: A review of open source software
+  supply chain attacks.
+\newblock {\em Detection of Intrusions and Malware, and Vulnerability
+  Assessment (DIMVA)}, 2020.
+
+\bibitem{shinn2023reflexion}
+Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik
+  Narasimhan, and Shunyu Yao.
+\newblock Reflexion: Language agents with verbal reinforcement learning.
+\newblock {\em Advances in Neural Information Processing Systems (NeurIPS)},
+  2023.
+
+\bibitem{openhands2024}
+Xingyao Wang, Boxuan Li, Yufan Song, Frank Frank, et~al.
+\newblock Openhands: An open platform for ai software developers as generalist
+  agents.
+\newblock {\em arXiv preprint arXiv:2407.16741}, 2024.
+
+\bibitem{yang2024sweagent}
+John Yang, Carlos~E Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao,
+  Karthik Narasimhan, and Ofir Press.
+\newblock Swe-agent: Agent-computer interfaces enable automated software
+  engineering.
+\newblock {\em arXiv preprint arXiv:2405.15793}, 2024.
+
+\bibitem{yao2022react}
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+  and Yuan Cao.
+\newblock React: Synergizing reasoning and acting in language models.
+\newblock {\em International Conference on Learning Representations (ICLR)},
+  2023.
+
+\end{thebibliography}
