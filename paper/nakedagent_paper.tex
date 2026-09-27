@@ -31,7 +31,7 @@
     showstringspaces=false
 }
 
-\title{\textbf{NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay}}
+\title{NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay}
 
 \author{
   \textbf{Reuben Bowlby} \\
@@ -47,7 +47,7 @@
 \maketitle
 
 \begin{abstract}
-Autonomous software engineering agents driven by Large Language Models (LLMs) increasingly rely on expansive, multi-tiered dependency trees. Mainstream agent scaffolds (e.g., SWE-agent, Aider, OpenHands) import between 20 and 50+ third-party packages to facilitate HTTP communication, terminal UI rendering, provider protocol abstraction, and telemetry. While feature-rich, this architectural paradigm introduces substantial supply-chain vulnerability attack surfaces, runtime version fragility, and heavy deployment footprints. In this paper, we introduce \textbf{NakedAgent}, an autonomous coding agent engineered under a strict zero-runtime-dependency constraint: it executes entirely upon standard Python 3.10+ library modules (\texttt{urllib}, \texttt{json}, \texttt{subprocess}, \texttt{re}, and \texttt{hashlib}). NakedAgent decouples tool invocation from proprietary JSON function-calling schemas by utilizing a Markdown fenced code-block protocol, enabling consistent tool use across local models (such as Qwen 2.5-Coder and Gemma 3) and hosted endpoints. To establish auditability and non-repudiation, we model agent execution as a pure Mealy state machine reducer $(S_t, E_t) \to (S_{t+1}, A_{t+1})$, combined with SHA-256 Merkle-linked state hashing recorded in an append-only JSON Lines (JSONL) event log. This architecture enables zero-inference offline replay verification, validating tool execution histories without querying an LLM. We present empirical findings from a SWE-bench Lite pilot with local 12B models, delineating scaffold-induced failure modes from model-inherent reasoning bounds. Finally, we formulate the \textit{Omakase} extensibility doctrine, demonstrating how clean tool substitution seams empower extensible agent behaviors without framework bloat.
+Autonomous software engineering agents driven by Large Language Models (LLMs) increasingly rely on expansive, multi-tiered dependency trees. Mainstream agent scaffolds (e.g., SWE-agent, Aider, OpenHands) import between 20 and 50+ third-party packages to facilitate HTTP communication, terminal UI rendering, provider protocol abstraction, and telemetry. While feature-rich, this architectural paradigm introduces substantial supply-chain vulnerability attack surfaces, runtime version fragility, and heavy deployment footprints. In this paper, we introduce NakedAgent, an autonomous coding agent engineered under a strict zero-runtime-dependency constraint: it executes entirely upon standard Python 3.10+ library modules (urllib, json, subprocess, re, and hashlib). NakedAgent decouples tool invocation from proprietary JSON function-calling schemas by utilizing a Markdown fenced code-block protocol, enabling consistent tool use across local models (such as Qwen 2.5-Coder and Gemma 3) and hosted endpoints. To establish auditability and tamper-evident transcript integrity, we model agent execution as a pure Mealy state machine reducer $(S_t, E_t) \to (S_{t+1}, A_{t+1})$, combined with SHA-256 Merkle-linked state hashing recorded in an append-only JSON Lines (JSONL) event log. This architecture enables zero-inference offline replay verification, validating tool execution histories without querying an LLM. We present empirical findings from a SWE-bench Lite pilot with local 12B models, delineating scaffold-induced failure modes from model-inherent reasoning bounds. Finally, we formulate the Omakase extensibility doctrine, demonstrating how clean tool substitution seams empower extensible agent behaviors without framework bloat.
 \end{abstract}
 
 \section{Introduction}
@@ -214,6 +214,7 @@ Table~\ref{tab:swebench} summarizes the comparative trajectories across configur
 \caption{SWE-bench Lite Exploratory Pilot Trajectory Results with Local Gemma 3 12B}
 \label{tab:swebench}
 \small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lccccc}
 \toprule
 \textbf{Configuration} & \textbf{Astropy-12907} & \textbf{Astropy-14182} & \textbf{Astropy-14365} & \textbf{Patches} & \textbf{Resolved} \\
@@ -225,7 +226,8 @@ C1: NakedAgent (system mode, raw) & Invalid (harness bracket bug) & Invalid (har
 C2: NakedAgent (CRLF text pipe) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & 3/3 (invalid CRLF) & 0/3 (0\%) \\
 C3: NakedAgent (binary write fix) & 1-hunk patch (7 regressions) & No patch (nudges exhausted) & No patch (nudges exhausted) & 1/3 valid & 0/3 (0\%) \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table*}
 
 \subsection{Error Taxonomy: Scaffold vs. Model Bounds}
