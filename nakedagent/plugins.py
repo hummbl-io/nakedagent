@@ -13,8 +13,14 @@ them. DISABLE is applied after all TOOLS merges, so it wins over any
 substitution, including a plugin that both defines and disables a name.
 
 Search order (later dirs win, so user-local overrides repo-local):
-  1. <workspace>/.nakedagent/plugins/   -- checked first
+  1. <workspace>/.nakedagent/plugins/   -- only when trust_workspace is set
   2. ~/.nakedagent/plugins/              -- checked second, overrides (1)
+
+Workspace plugins are OFF by default: running `python -m nakedagent` in an
+untrusted clone must not execute that repo's Python with the operator's
+privileges (clone-and-run is a primary use case). Pass
+`--trust-workspace-plugins` (or `trust_workspace=True` here) to enable them.
+The user-global dir is operator-owned and always loads.
 
 A plugin file is any `*.py` in those dirs. It must define a module-level
 `TOOLS: dict[str, ToolFunc]` and/or `DISABLE: list[str]`. Anything else in
@@ -37,12 +43,18 @@ from pathlib import Path
 from .tools import TOOLS, ToolFunc
 
 
-def _plugin_dirs(workspace: Path) -> list[Path]:
-    """Dirs to scan, in load order. Missing dirs are skipped silently."""
-    return [
-        workspace / ".nakedagent" / "plugins",
-        Path.home() / ".nakedagent" / "plugins",
-    ]
+def _plugin_dirs(workspace: Path, trust_workspace: bool = False) -> list[Path]:
+    """Dirs to scan, in load order. Missing dirs are skipped silently.
+
+    The workspace dir is included only when trust_workspace is set --
+    repo-local plugins run with the operator's privileges, so they need an
+    explicit opt-in.
+    """
+    dirs = []
+    if trust_workspace:
+        dirs.append(workspace / ".nakedagent" / "plugins")
+    dirs.append(Path.home() / ".nakedagent" / "plugins")
+    return dirs
 
 
 def _load_one(path: Path):
@@ -80,7 +92,12 @@ def _load_one(path: Path):
     return module
 
 
-def load_plugins(workspace: Path, registry: dict[str, ToolFunc] | None = None) -> dict[str, ToolFunc]:
+def load_plugins(
+    workspace: Path,
+    registry: dict[str, ToolFunc] | None = None,
+    *,
+    trust_workspace: bool = False,
+) -> dict[str, ToolFunc]:
     """Scan plugin dirs, merge every plugin's TOOLS into `registry` (default:
     the foundation TOOLS), apply every plugin's DISABLE, and return the
     merged registry.
@@ -89,10 +106,14 @@ def load_plugins(workspace: Path, registry: dict[str, ToolFunc] | None = None) -
     earlier -- deterministic, last-write-wins. Tool names are lowercased to
     match the case-insensitive dispatch in loop.step(). DISABLE is applied
     after all merges, so it wins over any substitution.
+
+    `trust_workspace` controls whether `<workspace>/.nakedagent/plugins/` is
+    scanned at all; it defaults off because workspace plugins are arbitrary
+    repo-controlled code running with the operator's privileges.
     """
     merged: dict[str, ToolFunc] = dict(registry if registry is not None else TOOLS)
     disabled: set[str] = set()
-    for d in _plugin_dirs(workspace):
+    for d in _plugin_dirs(workspace, trust_workspace):
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.py")):

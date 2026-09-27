@@ -35,6 +35,32 @@ class TestPluginLoad(unittest.TestCase):
         merged = load_plugins(self.workspace)
         self.assertEqual(set(merged.keys()), set(TOOLS.keys()))
 
+    def test_workspace_plugins_skipped_without_trust(self):
+        # Security default (issue #7): a repo-local plugin is repo-controlled
+        # code running with the operator's privileges -- clone-and-inspect is
+        # a primary use case, so the workspace dir is opt-in only.
+        d = self.workspace / ".nakedagent" / "plugins"
+        d.mkdir(parents=True)
+        _write_plugin(d, "sneaky.py",
+            "def f(args, content, workspace):\n"
+            "    return 'ran'\n"
+            "TOOLS = {'pwn': f}\n")
+        merged = load_plugins(self.workspace)
+        self.assertNotIn("pwn", merged)
+        merged = load_plugins(self.workspace, trust_workspace=True)
+        self.assertIn("pwn", merged)
+
+    def test_user_global_loads_without_trust(self):
+        # ~/.nakedagent/plugins/ is operator-owned -- always on.
+        d = Path(self._home.name) / ".nakedagent" / "plugins"
+        d.mkdir(parents=True)
+        _write_plugin(d, "mine.py",
+            "def f(args, content, workspace):\n"
+            "    return 'ran'\n"
+            "TOOLS = {'mine': f}\n")
+        merged = load_plugins(self.workspace)
+        self.assertIn("mine", merged)
+
     def test_plugin_tool_is_dispatchable(self):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
@@ -42,7 +68,7 @@ class TestPluginLoad(unittest.TestCase):
             "def to_upper(args, content, workspace):\n"
             "    return content.upper()\n"
             "TOOLS = {'upper': to_upper}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertIn("upper", merged)
         self.assertEqual(merged["upper"]("", "hi", self.workspace), "HI")
         # foundation tools still present
@@ -56,7 +82,7 @@ class TestPluginLoad(unittest.TestCase):
             "def ok(args, content, workspace):\n"
             "    return 'ok'\n"
             "TOOLS = {'ok': ok}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("broken", merged)
         self.assertIn("ok", merged)  # the good plugin still loaded
 
@@ -64,7 +90,7 @@ class TestPluginLoad(unittest.TestCase):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "notools.py", "x = 1\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertEqual(set(merged.keys()), set(TOOLS.keys()))
 
     def test_plugin_can_override_foundation_tool(self):
@@ -77,7 +103,7 @@ class TestPluginLoad(unittest.TestCase):
             "def safe(args, content, workspace):\n"
             "    return 'blocked by plugin'\n"
             "TOOLS = {'shell': safe}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertEqual(merged["shell"]("", "rm -rf /", self.workspace),
                          "blocked by plugin")
 
@@ -88,7 +114,7 @@ class TestPluginLoad(unittest.TestCase):
             "def h(args, content, workspace):\n"
             "    return 'should not load'\n"
             "TOOLS = {'hidden': h}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("hidden", merged)
 
     def test_tool_names_are_case_insensitive(self):
@@ -99,7 +125,7 @@ class TestPluginLoad(unittest.TestCase):
             "def f(args, content, workspace):\n"
             "    return 'r'\n"
             "TOOLS = {'MyTool': f}\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertIn("mytool", merged)
 
 
@@ -127,7 +153,7 @@ class TestPluginDisable(unittest.TestCase):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "readonly.py", "DISABLE = ['shell', 'write']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("shell", merged)
         self.assertNotIn("write", merged)
         self.assertIn("read", merged)
@@ -141,7 +167,7 @@ class TestPluginDisable(unittest.TestCase):
             "    return 'r'\n"
             "TOOLS = {'upper': f}\n")
         _write_plugin(d, "disable_upper.py", "DISABLE = ['upper']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("upper", merged)
 
     def test_plugin_with_only_disable_is_valid(self):
@@ -150,7 +176,7 @@ class TestPluginDisable(unittest.TestCase):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "noshell.py", "DISABLE = ['shell']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("shell", merged)
         self.assertIn("read", merged)
 
@@ -164,14 +190,14 @@ class TestPluginDisable(unittest.TestCase):
             "    return 'replaced'\n"
             "TOOLS = {'shell': f}\n")
         _write_plugin(d, "noshell.py", "DISABLE = ['shell']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("shell", merged)
 
     def test_disable_is_case_insensitive(self):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
         _write_plugin(d, "noshell.py", "DISABLE = ['SHELL']\n")
-        merged = load_plugins(self.workspace)
+        merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("shell", merged)
 
 

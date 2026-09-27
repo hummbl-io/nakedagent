@@ -1,13 +1,13 @@
-# AGENTS.md â€” nakedagent
+# AGENTS.md — nakedagent
 
 ## Project
 
-**nakedagent** â€” <!-- TODO: describe this repository -->
+**nakedagent** — a zero-runtime-dependency terminal coding agent. `python -m nakedagent` runs on a stock Python 3.10+ interpreter; `nakedagent/` imports only the standard library (`urllib`, `json`, `subprocess`, `re`).
 
 ## Scope
 
-- In scope: <!-- describe what this repo does -->
-- Out of scope: <!-- describe what belongs elsewhere -->
+- In scope: the agent loop (`loop.py`), fenced-block tool-call parser (`toolcall.py`), the four foundation tools (`tools.py`: read/write/patch/shell), the plugin seam (`plugins.py`), Ollama + OpenAI-compatible wire clients (`llm.py`), the SWE-bench harness (`bench/`).
+- Out of scope: provider SDKs, streaming UX, hosted telemetry, non-stdlib dependencies.
 
 ## Setup
 
@@ -15,11 +15,15 @@
 # Clone and enter
 git clone https://github.com/hummbl-io/nakedagent.git
 cd nakedagent
+python -m nakedagent           # interactive (needs a running Ollama, or --api openai --host ...)
+python -m nakedagent "prompt"  # one-shot
 ```
 
 ## Testing
 
-<!-- Add test commands here, or remove this section if no tests -->
+```bash
+python -m unittest discover -s tests   # stdlib unittest — no pytest dependency
+```
 
 ### Python baseline (gap-8 fleet-wide standard)
 
@@ -39,8 +43,14 @@ they will become required (Phase 2) after fleet cleanup.
 - Commit format: Conventional Commits
 - Branch naming: `type/agent/short-desc`
 - License: MIT (see `LICENSE`)
-- `.gitattributes` is required â€” the canonical fleet version normalizes text files to LF and marks binary types. Without it, Windows clones accumulate CRLF noise that pollutes diffs, blocks hooks, and creates phantom merge conflicts. Do not remove or weaken it.
+- `.gitattributes` is required — the canonical fleet version normalizes text files to LF and marks binary types. Without it, Windows clones accumulate CRLF noise that pollutes diffs, blocks hooks, and creates phantom merge conflicts. Do not remove or weaken it.
 - AI agents may assist with research, review, patch preparation, and operational coordination, but must not be credited in Git commit authorship metadata or commit-message trailers. Do not add `Co-authored-by`, `Generated-by`, `Authored-with`, or equivalent AI/vendor/agent attribution to commits. Agent activity belongs in internal receipts, bus messages, handoffs, or PR notes, not commit credit.
+
+## Security-sensitive surfaces
+
+- `tools.py` shell tool: non-interactive execution is gated by `--allow-shell` + `--shell-allowlist`; metachar blocking lives in `_split_command`.
+- `plugins.py`: `<workspace>/.nakedagent/plugins/` only loads with `--trust-workspace-plugins`; `~/.nakedagent/plugins/` always loads. See `SECURITY.md` § Trust boundaries.
+- `llm.py`: API keys come from named env vars (`--api-key-env`), never CLI values.
 
 ## Pre-PR-creation checklist
 
@@ -54,4 +64,6 @@ Before creating a PR branch, always:
 
 ## CI
 
-<!-- Describe CI workflows if any, or remove this section -->
+`.github/workflows/ci.yml` — `python -m unittest discover -s tests` on
+ubuntu-latest × Python 3.10/3.14 + windows-latest × Python 3.12, plus a
+pinned gitleaks secret scan.
