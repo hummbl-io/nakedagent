@@ -57,6 +57,18 @@ def _plugin_dirs(workspace: Path, trust_workspace: bool = False) -> list[Path]:
     return dirs
 
 
+def _resolve_trust(trust_workspace: bool, trust_workspace_plugins: bool | None) -> bool:
+    """One workspace-plugin opt-in, two keyword spellings.
+
+    `trust_workspace` is the name callers on main use; `trust_workspace_plugins`
+    is the name the functional-lane branch used (matching the CLI flag
+    `--trust-workspace-plugins`). Both name the same switch, so either one
+    enables the workspace dir -- treat them as cumulative opt-ins, not
+    alternatives to validate against each other.
+    """
+    return bool(trust_workspace) or bool(trust_workspace_plugins)
+
+
 def _load_one(path: Path):
     """Import a single plugin file and return the module, or None.
 
@@ -97,6 +109,7 @@ def load_plugins(
     registry: dict[str, ToolFunc] | None = None,
     *,
     trust_workspace: bool = False,
+    trust_workspace_plugins: bool | None = None,
 ) -> dict[str, ToolFunc]:
     """Scan plugin dirs, merge every plugin's TOOLS into `registry` (default:
     the foundation TOOLS), apply every plugin's DISABLE, and return the
@@ -110,10 +123,12 @@ def load_plugins(
     `trust_workspace` controls whether `<workspace>/.nakedagent/plugins/` is
     scanned at all; it defaults off because workspace plugins are arbitrary
     repo-controlled code running with the operator's privileges.
+    `trust_workspace_plugins` is the same opt-in under the longer name the
+    CLI flag uses -- either spelling enables the workspace dir.
     """
     merged: dict[str, ToolFunc] = dict(registry if registry is not None else TOOLS)
     disabled: set[str] = set()
-    for d in _plugin_dirs(workspace, trust_workspace):
+    for d in _plugin_dirs(workspace, _resolve_trust(trust_workspace, trust_workspace_plugins)):
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.py")):

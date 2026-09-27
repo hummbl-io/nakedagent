@@ -62,6 +62,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Timeout in seconds for shell tool execution.",
     )
     p.add_argument(
+        "--trust-plugins",
+        action="store_true",
+        help=(
+            "Load <workspace>/.nakedagent/plugins/*.py at startup. "
+            "Disabled by default to prevent arbitrary code execution on "
+            "untrusted repositories. Alias of --trust-workspace-plugins."
+        ),
+    )
+    p.add_argument(
         "--trust-workspace-plugins",
         action="store_true",
         help=(
@@ -69,6 +78,27 @@ def main(argv: list[str] | None = None) -> int:
             "default: workspace plugins are repo-controlled code running with "
             "your privileges. Only set this in workspaces you trust. "
             "User-global ~/.nakedagent/plugins/ always loads."
+        ),
+    )
+    p.add_argument(
+        "--event-log",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Run through the functional driver and append every agent event "
+            "to a JSONL log at PATH. One-shot mode only. Verify with "
+            "`python -m nakedagent.replay PATH`."
+        ),
+    )
+    p.add_argument(
+        "--resume",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Resume a suspended event log at PATH: replay-verify the recorded "
+            "prefix, then feed PROMPT as the human verdict that lifts the "
+            "suspension. PATH is reused as the event log — the suspended "
+            "trailer is replaced, the Merkle chain continues."
         ),
     )
     p.add_argument("--version", action="version", version=__version__)
@@ -81,6 +111,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.shell_timeout <= 0:
         print("error: --shell-timeout must be greater than 0", file=sys.stderr)
         return 1
+    if args.event_log and not args.prompt:
+        print("error: --event-log requires a one-shot prompt", file=sys.stderr)
+        return 1
+    if args.resume and not args.prompt:
+        print("error: --resume requires PROMPT as the verdict input", file=sys.stderr)
+        return 1
+    if args.resume and args.event_log and args.resume != args.event_log:
+        print("error: --resume reuses the same path as --event-log; pass only --resume", file=sys.stderr)
+        return 1
     host = args.host
     if host is None:
         if args.api != "ollama":
@@ -92,19 +131,44 @@ def main(argv: list[str] | None = None) -> int:
     llm_options = {}
     if args.api != "ollama":
         llm_options = {"api": args.api, "api_key_env": args.api_key_env}
+    # Plugin trust: two flag spellings, one opt-in. `trust_plugins` always
+    # rides along; `trust_workspace_plugins` is forwarded only when a trust
+    # flag was actually given -- downstream defaults govern otherwise.
+    plugin_trust: dict = {"trust_plugins": args.trust_plugins}
+    if args.trust_plugins or args.trust_workspace_plugins:
+        plugin_trust["trust_workspace_plugins"] = args.trust_workspace_plugins
     try:
         if args.prompt:
-            run(
-                args.prompt,
-                args.model,
-                workspace,
-                host,
-                allow_shell=args.allow_shell,
-                shell_allowlist=shell_allowlist,
-                shell_timeout=args.shell_timeout,
-                llm_options=llm_options,
-                trust_workspace_plugins=args.trust_workspace_plugins,
-            )
+            if args.event_log or args.resume:
+                # Deferred import keeps `nakedagent.driver.run_functional`
+                # patchable at call time (the CLI tests mock it there).
+                from .driver import run_functional
+
+                run_functional(
+                    args.prompt,
+                    args.model,
+                    workspace,
+                    host,
+                    event_log_path=args.resume or args.event_log,
+                    allow_shell=args.allow_shell,
+                    shell_allowlist=shell_allowlist,
+                    shell_timeout=args.shell_timeout,
+                    llm_options=llm_options,
+                    resume_from=args.resume,
+                    **plugin_trust,
+                )
+            else:
+                run(
+                    args.prompt,
+                    args.model,
+                    workspace,
+                    host,
+                    allow_shell=args.allow_shell,
+                    shell_allowlist=shell_allowlist,
+                    shell_timeout=args.shell_timeout,
+                    llm_options=llm_options,
+                    **plugin_trust,
+                )
         else:
             run_interactive(
                 args.model,
@@ -114,9 +178,14 @@ def main(argv: list[str] | None = None) -> int:
                 shell_allowlist=shell_allowlist,
                 shell_timeout=args.shell_timeout,
                 llm_options=llm_options,
+                trust_plugins=args.trust_plugins,
                 trust_workspace_plugins=args.trust_workspace_plugins,
             )
     except LLMError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except (RuntimeError, ValueError) as e:
+        # Resume refusals and eventlog integrity failures land here.
         print(f"error: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
