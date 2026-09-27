@@ -96,16 +96,15 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Generate SHA-256 Checksums
-        id: checksums
-        working-directory: dist
-        run: |
-          sha256sum *.whl *.tar.gz > checksums-sha256.txt
-
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: dist/
+
+      - name: Generate SHA-256 Checksums
+        id: checksums
+        run: |
+          sha256sum dist/*.whl dist/*.tar.gz > checksums-sha256.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
@@ -116,4 +115,4 @@ jobs:
           files: |
             dist/*.whl
             dist/*.tar.gz
-            dist/checksums-sha256.txt
+            checksums-sha256.txt
