@@ -5,10 +5,41 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nakedagent"
 version = "0.1.0"
-description = "A coding agent with zero runtime dependencies."
+description = "A coding agent with zero runtime dependencies. Stdlib-only Python."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [
+    { name = "Reuben Bowlby", email = "reuben@hummbl.io" },
+]
+maintainers = [
+    { name = "HUMMBL, LLC", email = "reuben@hummbl.io" },
+]
+keywords = [
+    "coding-agent",
+    "zero-dependencies",
+    "stdlib-only",
+    "llm",
+    "autonomous-agents",
+    "software-engineering",
+    "replay",
+    "mealy-machine",
+    "ollama",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = []
 
 [project.scripts]
@@ -17,6 +48,10 @@ nakedagent = "nakedagent.cli:main"
 [project.urls]
 Repository = "https://github.com/hummbl-io/nakedagent"
 Homepage = "https://github.com/hummbl-io/nakedagent"
+Documentation = "https://github.com/hummbl-io/nakedagent#readme"
+Issues = "https://github.com/hummbl-io/nakedagent/issues"
+Changelog = "https://github.com/hummbl-io/nakedagent/releases"
 
 [tool.setuptools.packages.find]
 include = ["nakedagent*"]
+

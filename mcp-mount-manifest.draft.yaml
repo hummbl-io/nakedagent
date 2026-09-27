@@ -1,0 +1,111 @@
+# mcp-mount-manifest.draft.yaml — sidekick MCP mount policy (DRAFT, uncommitted)
+#
+# Consumed by SidekickHarness.attach_mcp_client (proposed gate — see
+# idea pack: docs/research/idea-packs/2026-09-23-sidekick-mcp-mount-manifest.md).
+#
+# Tiers:
+#   t0 — never mount (secrets, remote exec, production mutation, real-world side effects)
+#   t1 — gated mount (reads free; writes pass through NoulGateEvaluator with args visible)
+#   t2 — free mount (pure compute / read-only knowledge)
+#
+# Every mounted tool is namespaced mcp__<server>__<tool> and a MOUNT event is
+# recorded in the session trace. Classification derived from
+# ~/.agents/registry/mcp-registry.yaml @ 2026-09-15 + per-server blast-radius read.
+
+schema: nakedagent.mcp-mount-manifest.v0
+as_of: 2026-09-23
+status: draft
+
+defaults:
+  unknown_server: t0            # fail-closed: unlisted servers never mount
+  unknown_tool_in_server: deny  # a server exposing unlisted tools mounts nothing extra
+  namespace_prefix: "mcp__{server}__{tool}"
+  record_mount_event: true
+  refuse_collisions: true       # post-prefix name collision -> skip tool + warn
+
+servers:
+  # ---- T0: never mount ----
+  onepassword:        {tier: t0, reason: "secrets material — hard boundary"}
+  aws-mcp:            {tier: t0, reason: "IAM mutation + spend; health: -32602"}
+  hummbl-omarchy:     {tier: t0, reason: "ssh_stdio remote exec"}
+  hummbl-media:       {tier: t0, reason: "ssh remote exec"}
+  node-repl:          {tier: t0, reason: "arbitrary JS eval — superset of shell", aliases: ["node_repl"]}
+  neon:               {tier: t0, reason: "production DB"}
+  cloudflare-api:     {tier: t0, reason: "infra mutation, oauth"}
+  vercel-mcp:         {tier: t0, reason: "deploy mutation, oauth"}
+  recall-ai:          {tier: t0, reason: "bots join live calls — real-world side effects"}
+  descript-cursor:    {tier: t0, reason: "external media mutation, oauth"}
+  hubspot-dev:        {tier: t0, reason: "CRM writes; health: 30s timeout"}
+  proton:             {tier: t0, reason: "comms side effects"}
+  aperture:           {tier: t0, reason: "tailnet surface; health: ENOTFOUND"}
+  claude-in-chrome:   {tier: t0, reason: "native-messaging extension — not stdio-mountable"}
+  linear:             {tier: t0, reason: "stdio variant carrying LINEAR_API_TOKEN secret — distinct from linear-server (http/oauth); revisit to t1 if token scope is read-only"}
+
+  # ---- T1: gated mount (reads free, writes gated) ----
+  coordination-bus:
+    tier: t1
+    allow_tools_pattern: ["get_*", "list_*", "read_*", "tail", "search", "status", "count", "last"]
+    deny_tools_pattern:  ["post", "queue"]   # bus writes = fleet-visible; require explicit gate
+    reason: "post is a fleet-visible write; reads are free. NOTE: server carries BUS_BRIDGE_TOKEN/BUS_CANONICAL_BRIDGE_URL secrets — mount spawns a credentialed process; gate reads on untrusted workloads too"
+  filesystem:
+    tier: t1
+    workspace_scope: enforce     # chroot to sidekick workspace; deny paths outside
+    reason: "local writes; scope must be enforced at mount"
+  github:
+    tier: t1
+    deny_tools_pattern: ["*_issue*", "*_pull_request*", "push*", "merge*", "create_*", "delete_*", "fork_*", "*comment*", "*review*", "*file*", "*branch*", "*release*"]
+    reason: "public-ish writes gated; reads free. NOTE: mounts a GITHUB_PERSONAL_ACCESS_TOKEN-bearing process — free 'reads' hit an authenticated API surface; deny widened post-audit (add_issue_comment/fork_repository/update_pull_request_branch escaped the original pattern); explicit allowlist still preferable"
+  git:
+    tier: t1
+    deny_tools_pattern: ["*push*", "*force*", "*reset*", "*clean*"]
+    reason: "local ops free; history/remote ops gated"
+  governance:
+    tier: t1
+    deny_tools_pattern: ["*set*", "*write*", "*update*", "*post*"]
+    reason: "governance state reads free; mutations gated"
+  cognitive-ledger:
+    tier: t1
+    reason: "append-only by design; ledger pollution is the risk — write calls gated"
+  memory:
+    tier: t1
+    deny_tools_pattern: ["*create*", "*delete*", "*update*", "*add*", "*observation*", "*relation*"]
+    reason: "memory poisoning — writes gated, reads free. Deny must cover add_observations/create_relations/delete_observations/delete_relations, not just create/delete/update"
+  linear-server:
+    tier: t1
+    deny_tools_pattern: ["*create*", "*update*", "*comment*", "*delete*"]
+    reason: "issue writes are low-blast-radius but external — gated"
+  fetch:
+    tier: t1
+    url_deny: ["*.ts.net", "169.254.*", "10.*", "192.168.*", "127.*", "localhost"]
+    reason: "SSRF — no tailnet/RFC1918/loopback targets"
+  agent-web-reader:
+    tier: t1
+    url_deny: ["*.ts.net", "169.254.*", "10.*", "192.168.*", "127.*", "localhost"]
+    reason: "same SSRF class as fetch"
+  artifact-engine:
+    tier: t1
+    reason: "artifact generation — local writes, content unreviewed"
+  hummbl-graph-mcp:
+    tier: t1
+    deny_tools_pattern: ["*write*", "*add*", "*delete*", "*update*"]
+    reason: "graph reads free; writes gated"
+  basen-mcp:
+    tier: t1
+    reason: "fleet utility — classify per-tool at mount; default deny writes. CONFLICT: sidekick-mcp-mounts.yaml lists T2 — resolve before mount"
+  bif:
+    tier: t1
+    reason: "fleet utility — classify per-tool at mount; default deny writes. CONFLICT: sidekick-mcp-mounts.yaml lists T2 — resolve before mount"
+  wolfram:
+    tier: t1
+    url_deny: ["*.ts.net", "169.254.*", "10.*", "192.168.*", "127.*", "localhost"]
+    reason: "NOT pure compute — mcp-remote egress to agenttools.wolfram.com: arbitrary query text leaves the box. Unmonitored exfil channel if treated as T2"
+
+  # ---- T2: free mount ----
+  sequential-thinking: {tier: t2, reason: "pure compute, no effects"}
+  base120:             {tier: t2, reason: "fleet knowledge reads", canonical: true}
+  hummbl-base120:      {tier: t2, reason: "SAME SERVER as base120 — do not mount both; refuse_collisions would collide", alias_of: base120}
+  utf:                 {tier: t2, reason: "fleet codec utility — pure"}
+
+# Note: claude_ai_connectors (Gmail/Drive/Notion/Linear/Slack/...) are a
+# claude-managed plane, not stdio/http servers — sidekicks cannot mount them
+# at all. Not listed = unreachable, which differs from T0 (reachable but denied).

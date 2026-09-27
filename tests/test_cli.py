@@ -43,6 +43,22 @@ class TestCliExitCodes(unittest.TestCase):
             allow_shell=True,
             shell_allowlist=("echo",),
             shell_timeout=3,
+            trust_plugins=False,
+            llm_options={},
+        )
+
+    @patch("nakedagent.cli.run")
+    def test_oneshot_passes_trust_plugins_flag(self, mock_run):
+        self.assertEqual(cli.main(["--trust-plugins", "do something"]), 0)
+        mock_run.assert_called_once_with(
+            "do something",
+            "qwen2.5-coder:7b",
+            Path(".").resolve(),
+            "http://localhost:11434",
+            allow_shell=False,
+            shell_allowlist=(),
+            shell_timeout=120,
+            trust_plugins=True,
             llm_options={},
             trust_workspace_plugins=False,
         )
@@ -92,6 +108,18 @@ class TestCliExitCodes(unittest.TestCase):
     @patch("nakedagent.cli.run", side_effect=KeyboardInterrupt)
     def test_keyboard_interrupt_exits_130(self, _mock_run):
         self.assertEqual(cli.main(["-w", ".", "do something"]), 130)
+
+    def test_event_log_requires_oneshot_prompt(self):
+        self.assertEqual(cli.main(["--event-log", "run.jsonl"]), 1)
+
+    @patch("nakedagent.driver.run_functional")
+    def test_event_log_routes_to_functional_driver(self, mock_fn):
+        self.assertEqual(
+            cli.main(["-w", ".", "--event-log", "run.jsonl", "do something"]),
+            0,
+        )
+        self.assertEqual(mock_fn.call_count, 1)
+        self.assertEqual(mock_fn.call_args.kwargs["event_log_path"], Path("run.jsonl"))
 
 
 if __name__ == "__main__":
