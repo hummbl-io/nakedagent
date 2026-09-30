@@ -158,8 +158,9 @@ this is byte-identical to the old static prompt (all four foundation tools
 carry `.usage`).
 
 **Disable:** a plugin that lists a tool name in `DISABLE` removes it from
-the registry entirely — "send it back" rather than swap. A read-only agent
-disables `shell` and `write`; the model never sees them in the prompt, so
+the registry entirely — "send it back" rather than swap. A read-only
+configuration of the built-in tools disables `shell`, `write`, and `patch`;
+the model never sees them in the prompt, so
 it never tries to call them. `DISABLE` is applied after all `TOOLS` merges,
 so it wins over any substitution, including a plugin that both defines and
 disables a name.

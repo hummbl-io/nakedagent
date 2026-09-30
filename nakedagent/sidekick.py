@@ -27,6 +27,7 @@ from .functional import (
     FunctionalMachine,
     ToolAction,
     TransitionReceipt,
+    _plain,
     reduce_agent_step,
 )
 from .loop import _system_prompt
@@ -197,6 +198,7 @@ class SidekickHarness:
         self._mcp_clients: List[StdlibMcpClient] = []
 
         # System prompt
+        self._custom_system_prompt = system_prompt
         self.system_prompt = system_prompt or _system_prompt(self.tools)
 
         # Initialize functional state. `policy` is genesis-bound (v0.4):
@@ -207,7 +209,15 @@ class SidekickHarness:
         )
 
     def attach_mcp_client(self, client: StdlibMcpClient) -> List[str]:
-        """Mount all tools exposed by an MCP client into the Sidekick tool registry."""
+        """Mount tools during startup, before the first admitted event.
+
+        Successful additions refresh the genesis prompt and state together.
+        Persist the genesis/header only after startup attachment is complete.
+        Late attachment requires a recorded capability-transition contract and
+        is refused before starting the client; existing history is immutable.
+        """
+        if self.state.step_count or self.state.trace:
+            raise RuntimeError("MCP tools must be attached before the first event; run already started")
         client.start()
         self._mcp_clients.append(client)
         mcp_tools = client.list_tools()
@@ -259,8 +269,17 @@ class SidekickHarness:
             self.tools[tool_name] = runner
             registered.append(tool_name)
 
-        # Refresh system prompt with new tools
-        self.system_prompt = _system_prompt(self.tools)
+        if registered:
+            # No events exist yet, so this defines the run's genesis without
+            # rewriting history. The next provider request reads this state.
+            prompt = _system_prompt(self.tools)
+            if self._custom_system_prompt:
+                prompt = self._custom_system_prompt + "\n\n" + prompt
+            self.state = AgentState.initial(
+                prompt, max_steps=self.state.max_steps,
+                policy=_plain(self.state.policy),
+            )
+            self.system_prompt = prompt
         return registered
 
     def close(self) -> None:

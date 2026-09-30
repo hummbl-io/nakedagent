@@ -18,6 +18,7 @@ import json
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from datasets import load_dataset
@@ -28,7 +29,7 @@ APPLY_CMDS = ["git apply --verbose", "git apply --verbose --3way", "patch --batc
 
 
 def run(cmd: list[str], data: bytes | None = None, timeout: int = 1800) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, input=data, capture_output=True, timeout=timeout)
+    return subprocess.run(cmd, input=data, capture_output=True, timeout=timeout, check=False)
 
 
 def image(iid: str) -> str:
@@ -52,21 +53,31 @@ def main() -> int:
     summary = {}
 
     for iid, pred in preds.items():
-        if not pred.get("model_patch", "").strip():
-            summary[iid] = {"resolved": False, "status": "empty_patch"}
-            print(f"{iid}: empty patch -> not resolved")
-            continue
-        spec = make_test_spec(ds[iid])
-        name = f"score-{iid.replace('__', '-')}-{int(time.time())}"
-        r = run(["docker", "run", "-d", "--name", name, image(iid), "sleep", "infinity"])
-        if r.returncode != 0:
-            summary[iid] = {"resolved": False, "status": "container_failed"}
-            print(f"{iid}: container failed: {r.stderr.decode()[:300]}")
-            continue
+        name = None
+        cleanup_needed = False
+        phase = "prepare"
         try:
+            if not pred.get("model_patch", "").strip():
+                summary[iid] = {"resolved": False, "status": "empty_patch"}
+                print(f"{iid}: empty patch -> not resolved")
+                continue
+            spec = make_test_spec(ds[iid])
+            # A unique name also makes cleanup safe if startup times out before
+            # Docker can tell us whether this attempt created its container.
+            name = f"score-{iid.replace('__', '-')}-{uuid.uuid4().hex}"
+            phase = "container_start"
+            cleanup_needed = True
+            r = run(["docker", "run", "-d", "--name", name, image(iid), "sleep", "infinity"])
+            if r.returncode != 0:
+                cleanup_needed = False
+                summary[iid] = {"resolved": False, "status": "container_failed"}
+                print(f"{iid}: container failed: {r.stderr.decode('utf-8', 'replace')[:300]}")
+                continue
+            phase = "patch_upload"
             run(["docker", "exec", "-i", name, "bash", "-c", "cat > /tmp/patch.diff"],
                 data=pred["model_patch"].encode("utf-8"))
             applied = None
+            phase = "patch_apply"
             for c in APPLY_CMDS:
                 p = run(["docker", "exec", "-w", "/testbed", name, "bash", "-c", f"{c} /tmp/patch.diff"])
                 if p.returncode == 0:
@@ -76,9 +87,11 @@ def main() -> int:
                 summary[iid] = {"resolved": False, "status": "patch_apply_failed"}
                 print(f"{iid}: patch did not apply")
                 continue
+            phase = "eval_upload"
             run(["docker", "exec", "-i", name, "bash", "-c", "cat > /eval.sh"],
                 data=spec.eval_script.encode("utf-8"))
             t0 = time.time()
+            phase = "evaluation"
             ev = run(["docker", "exec", name, "bash", "/eval.sh"], timeout=3600)
             log = out / f"{iid}.test_output.txt"
             log.write_bytes(ev.stdout + b"\n" + ev.stderr)
@@ -89,8 +102,21 @@ def main() -> int:
                             "tests_status": res.get("tests_status")}
             print(f"{iid}: resolved={res.get('resolved')} applied_with={applied!r} "
                   f"({time.time() - t0:.0f}s)")
+        except subprocess.TimeoutExpired as e:
+            summary[iid] = {"resolved": False, "status": "timeout", "phase": phase,
+                            "timeout_s": e.timeout}
+            (out / f"{iid}.test_output.txt").write_bytes((e.stdout or b"") + b"\n" + (e.stderr or b""))
+            print(f"{iid}: {phase} timed out after {e.timeout}s")
         finally:
-            run(["docker", "rm", "-f", name])
+            # Save every result before cleanup or another instance can fail.
+            (out / "score_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+            if cleanup_needed:
+                try:
+                    cleanup = run(["docker", "rm", "-f", name], timeout=30)
+                    if cleanup.returncode != 0:
+                        print(f"cleanup failed for {name}: {cleanup.stderr.decode('utf-8', 'replace')[:300]}")
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    print(f"cleanup failed for {name}: {e}")
 
     (out / "score_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     resolved = sum(1 for v in summary.values() if v["resolved"])

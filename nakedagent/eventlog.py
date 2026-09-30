@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from .functional import AgentEvent, _plain
+from .functional import AgentEvent, AgentState, _plain
 
 SCHEMA_VERSION = "nakedagent.eventlog@v0.4"
 HASH_ALG = "sha256-json-v4-policy-escalate"
@@ -119,14 +119,37 @@ def require_resumable(parsed: EventLog, path: Path) -> None:
             f"(trailer: {parsed.trailer})")
 
 
+def require_matching_final(parsed: EventLog, state: AgentState) -> None:
+    """Compare a parsed final record with its fully replayed state.
+
+    The caller must first validate the event chain. This shared check keeps
+    standalone verification and resume admission on the same final contract;
+    it performs no reads or mutations of the source file.
+    """
+    trailer = parsed.trailer
+    if trailer is None:
+        raise EventLogError("missing final record")
+    if trailer["step_count"] != state.step_count:
+        raise EventLogError(
+            f"trailer step_count {trailer['step_count']} != recomputed {state.step_count}")
+    if trailer["state_hash"] != state.current_hash():
+        raise EventLogError("trailer state_hash does not match recomputed terminal hash")
+    if (trailer["is_terminal"] != state.is_terminal or
+            trailer["terminal_reason"] != state.terminal_reason or
+            trailer["suspended"] != state.suspended):
+        raise EventLogError("trailer terminal status does not match replay")
+    if not state.is_terminal and not state.suspended:
+        raise EventLogError("incomplete run: neither terminal nor suspended")
+
+
 def open_resumed_log(path: Path, parsed: EventLog) -> EventLogWriter:
     """Re-open `path` for continuation after a suspended trailer.
 
     Removes the trailer record — the final record describes the run's
     *current* end state, so continuing replaces it rather than falsifying
     history (the suspension stays visible in the ESCALATE/USER_INPUT
-    events themselves). Call only after `require_resumable` and a
-    recorded-hash-bound replay have both passed: this mutates the file.
+    events themselves). Call only after `require_resumable`, recorded-hash-bound
+    replay, and `require_matching_final` succeed: this mutates the file.
     The returned writer continues sequence numbers; hash continuity comes
     from the replayed AgentState, not from this function.
     """

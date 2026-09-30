@@ -66,7 +66,7 @@ class TestMcpShadowRefusal(unittest.TestCase):
     def test_builtin_shadow_refused(self):
         from nakedagent.sidekick import SidekickHarness as _Sk
 
-        sk = _Sk.__new__(_Sk)
+        sk = _Sk(Path("."), MagicMock())
         sk.tools = {"read": MagicMock(name="builtin_read")}
         sk._mcp_clients = []
         sk.system_prompt = ""
@@ -84,7 +84,7 @@ class TestMcpShadowRefusal(unittest.TestCase):
     def test_malformed_tool_descriptor_skipped(self):
         from nakedagent.sidekick import SidekickHarness as _Sk
 
-        sk = _Sk.__new__(_Sk)
+        sk = _Sk(Path("."), MagicMock())
         sk.tools = {}
         sk._mcp_clients = []
         sk.system_prompt = ""

@@ -16,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .eventlog import EventLogError, read_log
+from .eventlog import EventLogError, read_log, require_matching_final
 from .functional import replay_trace
 
 
@@ -41,19 +41,10 @@ def verify(path: Path) -> tuple[bool, str]:
         if rec.state_hash != want:
             return False, f"event {i}: recorded hash does not match recomputed state"
 
-    t = log.trailer
-    if t is None:
-        return False, "missing final record"
-    if t["step_count"] != state.step_count:
-        return False, f"trailer step_count {t['step_count']} != recomputed {state.step_count}"
-    if t["state_hash"] != state.current_hash():
-        return False, "trailer state_hash does not match recomputed terminal hash"
-    if (t["is_terminal"] != state.is_terminal or
-            t["terminal_reason"] != state.terminal_reason or
-            t["suspended"] != state.suspended):
-        return False, "trailer terminal status does not match replay"
-    if not state.is_terminal and not state.suspended:
-        return False, "incomplete run: neither terminal nor suspended"
+    try:
+        require_matching_final(log, state)
+    except EventLogError as e:
+        return False, str(e)
 
     tools_used = sum(
         1 for rec in state.trace if rec.event.event_type == "TOOL_RESULT"

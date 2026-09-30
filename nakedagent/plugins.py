@@ -5,12 +5,12 @@ ships four curated tools; a user drops a `.py` file in a plugin dir and its
 `TOOLS` dict merges into the runtime registry at startup -- no fork, no
 registration ceremony, same `(args, content, workspace) -> str` signature.
 
-A plugin can also define `DISABLE = ["shell", "write"]` to remove tools from
-the registry entirely -- "send it back" rather than swap. This is the omakase
-autonomy half: a user who wants a read-only agent disables `shell` and
-`write`; the model never sees them in the prompt, so it never tries to call
-them. DISABLE is applied after all TOOLS merges, so it wins over any
-substitution, including a plugin that both defines and disables a name.
+A plugin can also define `DISABLE = ["shell", "write", "patch"]` to remove
+tools from the registry entirely -- "send it back" rather than swap. This is
+the omakase autonomy half: a read-only configuration of the built-in tools disables
+`shell`, `write`, and `patch`; the model never sees them in the prompt, so it
+never tries to call them. DISABLE is applied after all TOOLS merges, so it
+wins over any substitution, including a plugin that both defines and disables a name.
 
 Search order (later dirs win, so user-local overrides repo-local):
   1. <workspace>/.nakedagent/plugins/   -- only when trust_workspace is set
