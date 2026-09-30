@@ -175,7 +175,9 @@ for line in sys.stdin:
 
         def request():
             try:
-                self.client.call("large", {"data": "x" * (4 * 1024 * 1024)}, timeout_s=0.1)
+                # Keep the request live until explicit close() exercises its
+                # cancellation path; short request deadlines now self-cancel.
+                self.client.call("large", {"data": "x" * (4 * 1024 * 1024)}, timeout_s=5)
                 outcome.append("returned")
             except (OSError, RuntimeError) as exc:
                 outcome.append(type(exc).__name__)

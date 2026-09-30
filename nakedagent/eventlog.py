@@ -86,9 +86,10 @@ def open_log(
     workspace: str,
     extra: dict[str, Any] | None = None,
     max_steps: int = 25,
+    exclusive: bool = False,
 ) -> EventLogWriter:
-    """Open a new event log and write the header record."""
-    fh = open(path, "w", encoding="utf-8", newline="\n")  # noqa: SIM115 -- handle outlives the call; closed by EventLogWriter.close()
+    """Write a new header; `exclusive` atomically refuses an existing path."""
+    fh = open(path, "x" if exclusive else "w", encoding="utf-8", newline="\n")  # noqa: SIM115 -- handle outlives the call; closed by EventLogWriter.close()
     header: dict[str, Any] = {
         "kind": "header",
         "version": SCHEMA_VERSION,

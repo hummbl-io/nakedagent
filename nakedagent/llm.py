@@ -47,6 +47,10 @@ def chat(
     ponytail: stream=False for MVP (one JSON response, no NDJSON chunk
     parsing). Upgrade to streaming when interactive latency actually
     matters to a user, not before.
+
+    Bearer credentials are sent only to the initial URL. Redirects, including
+    same-origin redirects, omit them; configure the final API endpoint when
+    authentication is required.
     """
     if api not in APIS:
         raise LLMError(f"--api must be one of {', '.join(APIS)}, got: {api!r}")
@@ -69,12 +73,6 @@ def chat(
         name = "OpenAI-compatible API"
         url = f"{host.rstrip('/')}/chat/completions"
         payload = {"model": model, "messages": messages, "stream": False}
-        # An unset variable means no auth header: local servers (vLLM, LM
-        # Studio, Ollama's /v1) need none, and a hosted API that does will
-        # answer 401, which is reported below with the variable's name.
-        key = os.environ.get(api_key_env, "")
-        if key:
-            headers["Authorization"] = f"Bearer {key}"
 
     req = urllib.request.Request(
         url,
@@ -82,6 +80,13 @@ def chat(
         headers=headers,
         method="POST",
     )
+    if api == "openai":
+        # An unset variable means no auth header for local servers. Keep a
+        # supplied key on the initial request only: urllib copies ordinary
+        # headers across redirects, including to another host or HTTP.
+        key = os.environ.get(api_key_env, "")
+        if key:
+            req.add_unredirected_header("Authorization", f"Bearer {key}")
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             data = json.loads(resp.read())

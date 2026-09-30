@@ -12,6 +12,7 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -76,6 +77,76 @@ def _is_allowed_shell_command(cmd: str, allowlist: tuple[str, ...]) -> bool:
     return False
 
 
+def _is_audit_link(path: Path) -> bool:
+    """Include Windows junctions and other reparse points, not just symlinks."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def _append_shell_audit(workspace: Path, record: str) -> None:
+    """Skip unsafe audit paths; audit failure must never require following links.
+
+    Descriptor-relative, no-follow opens protect the final directory and file
+    where supported. Elsewhere pre/post checks reject existing redirections;
+    they are not a sandbox against concurrent replacement of path ancestors.
+    """
+    root = workspace.resolve(strict=True)
+    audit_dir = root / ".nakedagent"
+    log_path = audit_dir / "shell_audit.jsonl"
+    if _is_audit_link(audit_dir):
+        return
+    audit_dir.mkdir(exist_ok=True)
+    if (
+        _is_audit_link(audit_dir)
+        or audit_dir.resolve() != audit_dir
+        or _is_audit_link(log_path)
+        or log_path.resolve().parent != audit_dir
+    ):
+        return
+
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    directory_fd = None
+    file_fd = None
+    try:
+        if (
+            os.open in os.supports_dir_fd
+            and hasattr(os, "O_NOFOLLOW")
+            and hasattr(os, "O_DIRECTORY")
+        ):
+            directory_fd = os.open(
+                audit_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            file_fd = os.open(log_path.name, flags, 0o600, dir_fd=directory_fd)
+        else:
+            file_fd = os.open(log_path, flags, 0o600)
+        opened = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or _is_audit_link(audit_dir)
+            or audit_dir.resolve() != audit_dir
+            or _is_audit_link(log_path)
+            or log_path.resolve().parent != audit_dir
+            or not os.path.samestat(opened, log_path.lstat())
+        ):
+            return
+        with os.fdopen(file_fd, "a", encoding="utf-8") as stream:
+            file_fd = None  # the stream now owns the descriptor
+            stream.write(record)
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
 def _log_shell_event(
     workspace: Path,
     command: str,
@@ -89,9 +160,7 @@ def _log_shell_event(
     Shell is a high-trust tool; this file is meant for local auditability.
     Logging failures never block execution: best-effort audit.
     """
-    log_path = workspace / ".nakedagent" / "shell_audit.jsonl"
     try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         event = {
             "event": "shell_tool",
             "allowed": allowed,
@@ -104,9 +173,7 @@ def _log_shell_event(
         event["ts_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
             "+00:00", "Z"
         )
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False))
-            f.write("\n")
+        _append_shell_audit(workspace, json.dumps(event, ensure_ascii=False) + "\n")
     except Exception:
         # Auditability should not prevent the tool call from happening.
         pass
@@ -309,8 +376,11 @@ def _is_protected_target(target: Path, workspace: Path) -> tuple[bool, str]:
     except ValueError:
         return True, "outside workspace"
     parts = rel.parts
-    if parts and parts[0] in _PROTECTED_DIR_NAMES:
-        return True, parts[0]
+    # normcase folds Windows spellings even before a directory exists, while
+    # preserving case-sensitive POSIX names such as an ordinary .GIT folder.
+    first = os.path.normcase(parts[0]) if parts else ""
+    if first in _PROTECTED_DIR_NAMES:
+        return True, first
     return False, ""
 
 
