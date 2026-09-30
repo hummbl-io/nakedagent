@@ -47,10 +47,11 @@ is no supply.
 - **Plugins**: drop a `.py` file in `.nakedagent/plugins/` (repo-local,
   requires `--trust-workspace-plugins`) or `~/.nakedagent/plugins/`
   (user-global, always loaded) that defines a `TOOLS` dict (add or
-  override tools) and/or a `DISABLE` list (remove tools entirely — e.g. a
-  read-only agent disables `shell` and `write`). Each tool carries a `.usage`
-  attribute that controls its prompt example, so a plugin replacing a tool
-  replaces its syntax too. No registration, no framework — see
+  override tools) and/or a `DISABLE` list (remove tools entirely). A read-only
+  configuration of the built-in tools disables `shell`, `write`, and `patch`.
+  Each tool carries a `.usage` attribute that controls its prompt example,
+  so a plugin replacing a tool replaces its syntax too. No registration,
+  no framework — see
   [`DOCTRINE.md`](DOCTRINE.md) for the omakase framing. Repo-local plugins
   are off by default because they execute with your privileges — only pass
   the flag in workspaces you trust.

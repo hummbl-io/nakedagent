@@ -13,6 +13,7 @@ Migration refuses when:
   - an event type is unknown to the current reducer
   - replay disagrees with the recorded trailer (terminal/suspended/step_count)
   - the log is truncated (no final record)
+  - records do not follow header, events, final order
 
 Usage: python -m nakedagent.migrate_log <old.jsonl> <new.jsonl>
 """
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -39,11 +41,14 @@ class MigrationError(RuntimeError):
     pass
 
 
-def _read_legacy(path: Path) -> tuple[dict, list[AgentEvent], dict]:
+def _parse_legacy(source: bytes, path: Path) -> tuple[dict, list[AgentEvent], dict]:
+    """Parse the exact captured bytes used for the migration provenance hash."""
     header: dict[str, Any] | None = None
     events: list[AgentEvent] = []
     trailer: dict[str, Any] | None = None
-    with open(path, encoding="utf-8") as fh:
+    # Match text-file universal newlines without splitting literal Unicode
+    # separators inside valid JSON strings, as str.splitlines() would do.
+    with io.StringIO(source.decode("utf-8"), newline=None) as fh:
         for lineno, raw in enumerate(fh, start=1):
             line = raw.strip()
             if not line:
@@ -54,6 +59,8 @@ def _read_legacy(path: Path) -> tuple[dict, list[AgentEvent], dict]:
                 raise MigrationError(f"{path}:{lineno}: malformed JSON: {e}") from e
             if not isinstance(rec, dict):
                 raise MigrationError(f"{path}:{lineno}: record is not an object")
+            if trailer is not None:
+                raise MigrationError(f"{path}:{lineno}: record after final")
             kind = rec.get("kind")
             if kind == "header":
                 if header is not None:
@@ -77,8 +84,8 @@ def _read_legacy(path: Path) -> tuple[dict, list[AgentEvent], dict]:
                     raise MigrationError(f"{path}:{lineno}: invalid metadata")
                 events.append(AgentEvent(event_type=et, payload=rec["payload"], metadata=meta))
             elif kind == "final":
-                if trailer is not None:
-                    raise MigrationError(f"{path}:{lineno}: duplicate final")
+                if header is None:
+                    raise MigrationError(f"{path}:{lineno}: final before header")
                 trailer = rec
             else:
                 raise MigrationError(f"{path}:{lineno}: unknown record kind {kind!r}")
@@ -92,7 +99,7 @@ def _read_legacy(path: Path) -> tuple[dict, list[AgentEvent], dict]:
 def migrate(src_path: Path, dst_path: Path) -> dict[str, Any]:
     """Migrate into a newly created destination; existing paths are refused."""
     src_bytes = src_path.read_bytes()
-    header, events, trailer = _read_legacy(src_path)
+    header, events, trailer = _parse_legacy(src_bytes, src_path)
 
     system_prompt = header.get("system_prompt")
     if not isinstance(system_prompt, str):

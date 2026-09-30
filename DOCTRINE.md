@@ -68,11 +68,11 @@ the foundation's. The system prompt is built from the merged registry, so
 this happens automatically — no separate prompt-editing step.
 
 **Disable** — a plugin that lists a tool name in `DISABLE` removes it from
-the registry entirely. "Send it back" rather than swap. A user who wants a
-read-only agent disables `shell` and `write`; the model never sees them in
-the prompt, so it never tries to call them. `DISABLE` is applied after all
-`TOOLS` merges, so it wins over any substitution — including a plugin that
-both defines and disables a name.
+the registry entirely. "Send it back" rather than swap. A read-only
+configuration of the built-in tools disables `shell`, `write`, and `patch`;
+the model never sees them in the prompt, so it never tries to call them.
+`DISABLE` is applied after all `TOOLS` merges, so it wins over any
+substitution — including a plugin that both defines and disables a name.
 
 This is where `difflib` diffs on `patch`, `read` pagination, cloud
 providers, shell sandboxing, context compaction, and every other

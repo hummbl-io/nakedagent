@@ -84,8 +84,9 @@ def run_functional(
 
     `resume_from` re-opens a suspended event log instead of starting a
     fresh run: the recorded events are replayed through the reducer with
-    recorded-hash and policy binding (refusing a corrupted or non-suspended
-    source), the trailer is replaced, and `prompt` enters as the human
+    recorded-hash, final-record and policy binding (refusing a corrupted or
+    non-suspended source before loading plugins), the trailer is replaced,
+    and `prompt` enters as the human
     verdict that lifts the suspension. `event_log_path` must equal
     `resume_from` — resuming writes back to the same file.
 
@@ -102,7 +103,14 @@ def run_functional(
     if resume_from is not None:
         if event_log_path != resume_from:
             raise ValueError("resume_from requires event_log_path to name the same file")
-        from .eventlog import open_resumed_log, read_log, require_resumable
+        from .eventlog import (
+            open_resumed_log,
+            read_log,
+            require_matching_final,
+            require_resumable,
+        )
+        from .functional import replay_trace
+
         parsed = read_log(resume_from)
         require_resumable(parsed, resume_from)
         header = parsed.header
@@ -113,6 +121,21 @@ def run_functional(
             raise RuntimeError("cannot resume: recorded workspace is not absolute")
         if workspace != recorded_workspace.resolve():
             raise RuntimeError("cannot resume: current workspace differs from recorded workspace")
+
+        # Validate the complete recorded run before plugin loading or opening
+        # the log for continuation. A valid prefix cannot repair a false final.
+        state, chain_ok = replay_trace(
+            header["system_prompt"], parsed.events,
+            max_steps=header["max_steps"],
+            recorded_hashes=parsed.event_hashes,
+            policy={"model": header["model"], "workspace": header["workspace"],
+                    "extra": header.get("extra", {})},
+        )
+        if not chain_ok:
+            raise RuntimeError("cannot resume: recorded chain does not recompute")
+        require_matching_final(parsed, state)
+        if not state.suspended or state.is_terminal:
+            raise RuntimeError("cannot resume: replayed state is not suspended")
 
     registry = tools if tools is not None else _build_tools(
         workspace,
@@ -127,19 +150,7 @@ def run_functional(
     log: EventLogWriter | None = None
     active_log_path = Path(event_log_path).resolve() if event_log_path is not None else None
     if parsed is not None:
-        from .functional import replay_trace
         header = parsed.header
-        state, chain_ok = replay_trace(
-            header["system_prompt"], parsed.events,
-            max_steps=header["max_steps"],
-            recorded_hashes=parsed.event_hashes,
-            policy={"model": header["model"], "workspace": header["workspace"],
-                    "extra": header.get("extra", {})},
-        )
-        if not chain_ok:
-            raise RuntimeError("cannot resume: recorded chain does not recompute")
-        if not state.suspended or state.is_terminal:
-            raise RuntimeError("cannot resume: replayed state is not suspended")
         if system_prompt != header["system_prompt"]:
             raise RuntimeError(
                 "cannot resume: current registry prompt differs from the "

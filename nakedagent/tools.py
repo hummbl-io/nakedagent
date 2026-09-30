@@ -425,7 +425,10 @@ def tool_patch(args: str, content: str, workspace: Path) -> str:
     except ValueError as e:
         return f"Error: malformed patch block ({e})."
 
-    original = target.read_text(encoding="utf-8", errors="replace")
+    try:
+        original = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: {path} is not valid UTF-8; patch refused without changing the file."
     count = original.count(search)
     if count == 0:
         return f"Error: SEARCH text not found in {path}. It must match exactly, including whitespace."
@@ -444,19 +447,21 @@ def _split_search_replace(block: str) -> tuple[str, str]:
     marker-shaped line *inside* the SEARCH or REPLACE body hijack the split
     and silently produce the wrong edit while still reporting success (e.g.
     patching a file that itself contains git conflict markers). A second
-    <<<<<<< before the matching >>>>>>> is rejected outright rather than
-    guessed at, for the same reason.
+    <<<<<<< before the matching >>>>>>> REPLACE is rejected outright rather
+    than guessed at, for the same reason. Opening and closing markers must
+    match their full names. Nonblank trailing content is refused so another
+    patch block cannot be silently ignored after the first edit.
     """
     lines = block.splitlines()
     try:
-        start = next(i for i, ln in enumerate(lines) if ln.strip().startswith("<<<<<<<"))
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == "<<<<<<< SEARCH")
         sep = next(
             i for i in range(start + 1, len(lines)) if lines[i].strip() == "======="
         )
         end = next(
             i
             for i in range(sep + 1, len(lines))
-            if lines[i].strip().startswith(">>>>>>>")
+            if lines[i].strip() == ">>>>>>> REPLACE"
         )
     except StopIteration:
         raise ValueError(
@@ -464,6 +469,8 @@ def _split_search_replace(block: str) -> tuple[str, str]:
         )
     if any(lines[i].strip().startswith("<<<<<<<") for i in range(start + 1, end)):
         raise ValueError("a second <<<<<<< marker appears before the matching >>>>>>>")
+    if any(line.strip() for line in lines[end + 1 :]):
+        raise ValueError("unexpected content after >>>>>>> REPLACE; use one patch block per call")
     search = "\n".join(lines[start + 1 : sep])
     replace = "\n".join(lines[sep + 1 : end])
     return search, replace

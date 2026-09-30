@@ -221,7 +221,7 @@ class TestRefusedNameReservation(unittest.TestCase):
         from nakedagent.mcp import StdlibMcpClient
         from nakedagent.sidekick import SidekickHarness
 
-        sk = SidekickHarness.__new__(SidekickHarness)
+        sk = SidekickHarness(Path("."), MagicMock())
         sk.tools = {}
         sk._mcp_clients = []
         sk.system_prompt = ""

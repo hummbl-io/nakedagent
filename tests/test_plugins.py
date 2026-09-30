@@ -133,10 +133,10 @@ class TestPluginLoad(unittest.TestCase):
 
 
 class TestPluginDisable(unittest.TestCase):
-    """DISABLE is the omakase autonomy half (DOCTRINE.md): a user who wants a
-    read-only agent disables `shell` and `write`; the model never sees them
-    in the prompt, so it never tries to call them. DISABLE is applied after
-    all TOOLS merges, so it wins over any substitution."""
+    """DISABLE is the omakase autonomy half (DOCTRINE.md): a read-only
+    configuration of the built-in tools disables `shell`, `write`, and `patch`;
+    the model never sees them in the prompt, so it never tries to call them.
+    DISABLE is applied after all TOOLS merges, so it wins over any substitution."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -152,15 +152,15 @@ class TestPluginDisable(unittest.TestCase):
         self._home.cleanup()
         self._tmp.cleanup()
 
-    def test_disable_removes_foundation_tool(self):
+    def test_readonly_recipe_removes_all_foundation_mutators(self):
         d = self.workspace / ".nakedagent" / "plugins"
         d.mkdir(parents=True)
-        _write_plugin(d, "readonly.py", "DISABLE = ['shell', 'write']\n")
+        _write_plugin(d, "readonly.py", "DISABLE = ['shell', 'write', 'patch']\n")
         merged = load_plugins(self.workspace, trust_workspace=True)
         self.assertNotIn("shell", merged)
         self.assertNotIn("write", merged)
         self.assertIn("read", merged)
-        self.assertIn("patch", merged)
+        self.assertNotIn("patch", merged)
 
     def test_disable_removes_plugin_tool(self):
         d = self.workspace / ".nakedagent" / "plugins"

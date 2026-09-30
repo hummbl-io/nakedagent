@@ -38,7 +38,43 @@ def image_name(iid: str) -> str:
 
 def sh(cmd: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          encoding="utf-8", errors="replace")
+                          encoding="utf-8", errors="replace", check=False)
+
+
+class PatchCollectionError(RuntimeError):
+    """A prediction cannot be completed without a trustworthy patch."""
+
+
+def _git_output(container: str, args: list[str], ok: tuple[int, ...] = (0,)) -> str:
+    try:
+        result = sh(["docker", "exec", "-w", "/testbed", container, "git", *args])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise PatchCollectionError(f"git {args[0]} failed: {exc}") from exc
+    if result.returncode not in ok:
+        raise PatchCollectionError(
+            f"git {args[0]} exited {result.returncode}: {result.stderr.strip()[:500]}")
+    return result.stdout
+
+
+def capture_baseline(container: str) -> str:
+    """Pin the original image HEAD before the model can stage or commit edits."""
+    baseline = _git_output(container, ["rev-parse", "--verify", "HEAD"]).strip()
+    if len(baseline) not in (40, 64) or any(c not in "0123456789abcdef" for c in baseline):
+        raise PatchCollectionError("git rev-parse returned an invalid baseline object ID")
+    return baseline
+
+
+def collect_patch(container: str, baseline: str) -> str:
+    """Collect tracked and nonignored new files without modifying the index."""
+    options = ["--binary", "--no-ext-diff", "--no-textconv"]
+    parts = [_git_output(container, ["diff", *options, baseline, "--"])]
+    untracked = _git_output(container, ["ls-files", "--others", "--exclude-standard", "-z"])
+    for path in untracked.split("\0"):
+        if path:
+            # --no-index uses exit 1 to report a valid nonempty diff.
+            parts.append(_git_output(container, ["diff", "--no-index", *options,
+                                                 "--", "/dev/null", path], ok=(0, 1)))
+    return "".join(parts)
 
 
 def make_shell(container: str, timeout: int = 60):
@@ -99,7 +135,7 @@ def make_container_file_tools(container: str):
         # Binary stdin: text-mode pipes on Windows turn "\n" into "\r\n", which
         # rewrote every line of the file and produced whole-file diffs.
         w = subprocess.run(["docker", "exec", "-i", container, "bash", "-c", f"cat > '{path}'"],
-                           input=new.encode("utf-8"), capture_output=True, timeout=60)
+                           input=new.encode("utf-8"), capture_output=True, timeout=60, check=False)
         return (f"Patched {args.strip()}." if w.returncode == 0
                 else f"Error: write failed: {w.stderr.decode('utf-8', 'replace')[:300]}")
 
@@ -117,7 +153,8 @@ def make_container_file_tools(container: str):
     return {"read": c_read, "patch": c_patch}
 
 
-NUDGE = ("[verifier] `git diff` in /testbed is still empty: no source change has been made. "
+NUDGE = ("[verifier] The patch against the initial /testbed checkout is still empty: "
+         "no source change has been made. "
          "The task is not done. Use `read` to view the relevant code and `patch` to edit it, "
          "then stop.")
 
@@ -137,9 +174,10 @@ def main() -> int:
     a = ap.parse_args()
 
     sys.path.insert(0, a.naked_src)
-    from nakedagent import loop  # noqa: E402
-
     from datasets import load_dataset
+
+    from nakedagent import loop
+
     lo, hi = (int(x) for x in a.slice.split(":"))
     rows = load_dataset(a.subset, split=a.split).select(range(lo, hi))
 
@@ -175,30 +213,42 @@ def main() -> int:
             ]
             status = "ok"
             nudges_used = 0
+            baseline = None
+            diff = None
             try:
-                loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
-                while a.mode == "system" and nudges_used < a.nudges:
-                    if sh(["docker", "exec", "-w", "/testbed", name, "git", "diff"]).stdout.strip():
-                        break
-                    nudges_used += 1
-                    print(f"--- verifier nudge {nudges_used}/{a.nudges} ---", flush=True)
-                    messages.append({"role": "user", "content": NUDGE})
+                baseline = capture_baseline(name)
+                try:
                     loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
-            except Exception as e:  # record, still collect whatever diff exists
-                status = f"error: {type(e).__name__}: {e}"
-            diff = sh(["docker", "exec", "-w", "/testbed", name, "git", "diff"]).stdout
+                    while a.mode == "system" and nudges_used < a.nudges:
+                        if collect_patch(name, baseline).strip():
+                            break
+                        nudges_used += 1
+                        print(f"--- verifier nudge {nudges_used}/{a.nudges} ---", flush=True)
+                        messages.append({"role": "user", "content": NUDGE})
+                        loop._run_until_done(messages, a.model, ws, loop.DEFAULT_HOST, tools=tools)
+                except Exception as e:  # noqa: BLE001 -- preserve partial work on arbitrary model/plugin errors
+                    status = f"error: {type(e).__name__}: {e}"
+                diff = collect_patch(name, baseline)
+            except PatchCollectionError as e:
+                status = f"collection_error: {e} (run status: {status})"
             turns = sum(1 for m in messages if m["role"] == "assistant")
-            preds[iid] = {"instance_id": iid, "model_name_or_path": f"nakedagent/{a.model}",
-                          "model_patch": diff}
+            if diff is not None:
+                preds[iid] = {"instance_id": iid, "model_name_or_path": f"nakedagent/{a.model}",
+                              "model_patch": diff}
             (out / f"{iid}.traj.json").write_text(json.dumps(
-                {"status": status, "mode": a.mode, "nudges_used": nudges_used,
+                {"status": status, "baseline": baseline, "mode": a.mode, "nudges_used": nudges_used,
                  "turns": turns, "elapsed_s": round(time.time() - t0, 1),
                  "messages": messages}, indent=1), encoding="utf-8")
             preds_path.write_text(json.dumps(preds, indent=1), encoding="utf-8")
-            print(f"=== {iid}: {status}, turns={turns}, patch_chars={len(diff)}, "
+            print(f"=== {iid}: {status}, turns={turns}, patch_chars={len(diff) if diff is not None else 'unavailable'}, "
                   f"{time.time() - t0:.0f}s", flush=True)
         finally:
-            sh(["docker", "rm", "-f", name])
+            try:
+                cleanup = sh(["docker", "rm", "-f", name], timeout=30)
+                if cleanup.returncode != 0:
+                    print(f"cleanup failed for {name}: {cleanup.stderr[:300]}")
+            except (OSError, subprocess.TimeoutExpired) as e:
+                print(f"cleanup failed for {name}: {e}")
     return 0
 
 
