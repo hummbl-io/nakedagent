@@ -90,6 +90,7 @@ def _read_legacy(path: Path) -> tuple[dict, list[AgentEvent], dict]:
 
 
 def migrate(src_path: Path, dst_path: Path) -> dict[str, Any]:
+    """Migrate into a newly created destination; existing paths are refused."""
     src_bytes = src_path.read_bytes()
     header, events, trailer = _read_legacy(src_path)
 
@@ -121,6 +122,9 @@ def migrate(src_path: Path, dst_path: Path) -> dict[str, Any]:
         workspace=header["workspace"],
         max_steps=max_steps,
         extra=extra,
+        # Protect public API callers too, including source aliases. Exclusive
+        # creation refuses existing files and links before any truncation.
+        exclusive=True,
     )
     ok = False
     try:
@@ -153,6 +157,7 @@ def migrate(src_path: Path, dst_path: Path) -> dict[str, Any]:
         ok = True
     finally:
         if not ok:
+            # This path was newly created by the exclusive open above.
             writer.fh.close()  # release the handle before unlink (Windows lock)
             dst_path.unlink(missing_ok=True)
     return {

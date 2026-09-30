@@ -20,6 +20,18 @@ from typing import Any
 MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
+class _Write:
+    """One frame; dispatch/cancellation decisions use the connection lock."""
+
+    def __init__(self, frame: str, deadline: float):
+        self.frame = frame
+        self.deadline = deadline
+        self.done = threading.Event()
+        self.started = False
+        self.cancelled = False
+        self.error: Exception | None = None
+
+
 class _Connection:
     """State owned by exactly one child generation."""
 
@@ -28,6 +40,9 @@ class _Connection:
         self.stdout_q = stdout_q
         self.lock = threading.Lock()
         self.write_lock = threading.Lock()
+        self.writes: queue.Queue[_Write] = queue.Queue(maxsize=64)
+        self.writer: threading.Thread | None = None
+        self.dispatcher: threading.Thread | None = None
         self.pending: dict[int, queue.Queue[Any]] = {}
         self.stderr_tail: list[str] = []
         self.stderr_lock = threading.Lock()
@@ -111,9 +126,105 @@ class StdlibMcpClient:
                     return
 
     def _start_dispatcher(self, conn: _Connection) -> None:
-        thread = threading.Thread(target=self._dispatch_stdout, args=(conn,), daemon=True)
-        conn.threads.append(thread)
-        thread.start()
+        with conn.lock:
+            if conn.dispatcher is not None:
+                return
+            if conn.closed:
+                raise RuntimeError("MCP connection closed")
+            thread = threading.Thread(target=self._dispatch_stdout, args=(conn,), daemon=True)
+            conn.dispatcher = thread
+            conn.threads.append(thread)
+            thread.start()
+
+    def _abort_write(self, conn: _Connection) -> None:
+        """Retire this generation after an interrupted or failed pipe write.
+
+        A partially written JSON frame cannot be reused safely. Do not call
+        close() here: it acquires lifecycle locks and waits for I/O threads.
+        Killing the owned child releases a blocked pipe without making the
+        caller wait for cleanup or risking a replacement generation.
+        """
+        self._fail_pending(conn, RuntimeError(
+            "MCP connection closed after interrupted request write; effect outcome unknown"))
+        try:
+            if conn.proc.poll() is None:
+                conn.proc.kill()
+        except OSError as exc:
+            self._cleanup_errors.append(type(exc).__name__)
+
+    def _write_frames(self, conn: _Connection) -> None:
+        """One writer per connection, never one blocking thread per call."""
+        while not conn.closed:
+            try:
+                job = conn.writes.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            locked = conn.write_lock.acquire(timeout=max(0.0, job.deadline - time.monotonic()))
+            try:
+                with conn.lock:
+                    if conn.closed:
+                        job.error = RuntimeError("MCP connection closed")
+                    elif job.cancelled or not locked or time.monotonic() >= job.deadline:
+                        job.error = RuntimeError("MCP request write timed out")
+                    else:
+                        job.started = True
+                if job.error is None:
+                    try:
+                        assert conn.proc.stdin is not None
+                        conn.proc.stdin.write(job.frame)
+                        conn.proc.stdin.flush()
+                    except Exception as exc:  # noqa: BLE001 -- retire the transport on any writer failure
+                        job.error = exc
+                        self._abort_write(conn)
+            finally:
+                # Synchronize with the caller's expiry decision. Once done
+                # is set, the caller knows the frame is no longer in flight.
+                with conn.lock:
+                    job.done.set()
+                if locked:
+                    conn.write_lock.release()
+        # Release queued frames promptly after this generation is retired.
+        while True:
+            try:
+                job = conn.writes.get_nowait()
+            except queue.Empty:
+                return
+            job.error = RuntimeError("MCP connection closed")
+            job.done.set()
+
+    def _send(self, conn: _Connection, payload: dict[str, Any], deadline: float,
+              timeout_error: RuntimeError) -> None:
+        frame = json.dumps(payload) + "\n"
+        if time.monotonic() >= deadline:
+            raise timeout_error
+        job = _Write(frame, deadline)
+        with conn.lock:
+            if conn.closed:
+                raise RuntimeError("MCP connection closed")
+            if conn.writer is None:
+                thread = threading.Thread(target=self._write_frames, args=(conn,), daemon=True)
+                conn.writer = thread
+                conn.threads.append(thread)
+                thread.start()
+        try:
+            conn.writes.put(job, timeout=max(0.0, deadline - time.monotonic()))
+        except queue.Full:
+            raise timeout_error from None
+        with conn.lock:
+            # Shutdown may have drained the queue between the earlier check
+            # and put(). Do not wait on a frame with no remaining writer.
+            if conn.closed:
+                job.cancelled = True
+                raise RuntimeError("MCP connection closed")
+        if not job.done.wait(timeout=max(0.0, deadline - time.monotonic())):
+            with conn.lock:
+                job.cancelled = True
+                interrupted = job.started and not job.done.is_set()
+            if interrupted:
+                self._abort_write(conn)
+            raise timeout_error
+        if job.error is not None:
+            raise job.error
 
     def start(self, timeout_s: float = 30.0) -> None:
         """Start the MCP server subprocess and perform the MCP handshake.
@@ -122,7 +233,10 @@ class StdlibMcpClient:
         then the `initialized` notification before any other request; real
         servers may reject `tools/list` issued pre-handshake.
         """
-        with self._lifecycle_lock:
+        deadline = time.monotonic() + timeout_s
+        if not self._lifecycle_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise RuntimeError(f"MCP start timed out after {timeout_s}s")
+        try:
             if self.proc is not None:
                 if (self.proc.poll() is None and self._initialized
                         and self._connection is not None
@@ -157,23 +271,25 @@ class StdlibMcpClient:
                         "capabilities": {},
                         "clientInfo": {"name": "nakedagent", "version": "0.1.0"},
                     },
-                    timeout_s,
+                    max(0.0, deadline - time.monotonic()),
                 )
-                self._notify("notifications/initialized", {})
+                self._notify("notifications/initialized", {}, deadline=deadline)
                 self._initialized = True
             except Exception:  # Any handshake failure must reap the child.
+                self._abort_write(conn)
                 self.close()
                 raise
+        finally:
+            self._lifecycle_lock.release()
 
-    def _notify(self, method: str, params: dict[str, Any]) -> None:
+    def _notify(self, method: str, params: dict[str, Any], *, deadline: float | None = None) -> None:
         """Send a JSON-RPC notification (no id, no response expected)."""
         assert self.proc is not None and self.proc.stdin is not None
-        msg = json.dumps({"jsonrpc": "2.0", "method": method, "params": params})
         conn = self._connection
         assert conn is not None
-        with conn.write_lock:
-            self.proc.stdin.write(f"{msg}\n")
-            self.proc.stdin.flush()
+        self._send(conn, {"jsonrpc": "2.0", "method": method, "params": params},
+                   deadline if deadline is not None else time.monotonic() + 30.0,
+                   RuntimeError(f"MCP notification {method!r} timed out"))
 
     def _stderr_text(self) -> str:
         conn = self._connection
@@ -234,10 +350,16 @@ class StdlibMcpClient:
                             thread.join(timeout=1)
 
     def call(self, method: str, params: dict[str, Any] | None = None, timeout_s: float = 30.0) -> Any:
-        """Execute a JSON-RPC 2.0 request and return the result."""
+        """Execute a request with a deadline for locks, sending, and reply.
+
+        Unsent expired frames are cancelled. An interrupted write retires the
+        connection; timing out cannot undo remote effects already started.
+        """
         if timeout_s < 0:
             raise ValueError("timeout_s must be nonnegative")
         deadline = time.monotonic() + timeout_s
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"MCP call {method!r} timed out after {timeout_s}s")
         if not self._lifecycle_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
             raise RuntimeError(f"MCP call {method!r} timed out after {timeout_s}s")
         try:
@@ -257,6 +379,9 @@ class StdlibMcpClient:
     def _rpc(self, conn: _Connection, method: str,
              params: dict[str, Any] | None, timeout_s: float) -> Any:
         deadline = time.monotonic() + timeout_s
+        timeout_error = RuntimeError(f"MCP call {method!r} timed out after {timeout_s}s")
+        if time.monotonic() >= deadline:
+            raise timeout_error
         response_q: queue.Queue[Any] = queue.Queue(maxsize=1)
         with conn.lock:
             if conn.closed:
@@ -266,26 +391,19 @@ class StdlibMcpClient:
             conn.pending[request_id] = response_q
             payload = {"jsonrpc": "2.0", "id": request_id,
                        "method": method, "params": params or {}}
-        assert conn.proc.stdin is not None
-        with conn.write_lock:
-            try:
-                if conn.closed:
-                    raise RuntimeError("MCP connection closed")
-                conn.proc.stdin.write(json.dumps(payload) + "\n")
-                conn.proc.stdin.flush()
-            except Exception:
-                with conn.lock:
-                    conn.pending.pop(request_id, None)
-                raise
-        if not conn.threads:
+        try:
             self._start_dispatcher(conn)
+            self._send(conn, payload, deadline, timeout_error)
+        except Exception:
+            with conn.lock:
+                conn.pending.pop(request_id, None)
+            raise
         try:
             data = response_q.get(timeout=max(0.0, deadline - time.monotonic()))
         except queue.Empty:
             with conn.lock:
                 conn.pending.pop(request_id, None)
-            raise RuntimeError(
-                f"MCP call {method!r} timed out after {timeout_s}s") from None
+            raise timeout_error from None
         if isinstance(data, Exception):
             raise data
         if "error" in data:

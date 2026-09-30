@@ -17,22 +17,42 @@ provable lane for one-shot runs (`--event-log`).
 """
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from . import llm
 from .eventlog import EventLogWriter, open_log
 from .functional import AgentEvent, AgentState, agent_reducer
 from .loop import _build_tools, _system_prompt
+from .tools import tool_patch, tool_write
 
 
-def _dispatch(tools: dict, action, workspace: Path) -> str:
+def _dispatch(tools: dict, action, workspace: Path,
+              active_log: EventLogWriter | None = None,
+              active_log_path: Path | None = None) -> str:
     """Execute one ToolAction. Mirrors loop.step's error containment: a tool
     bug or unknown name becomes a result string, not a crash."""
     tool = tools.get(action.tool_name.lower())
     if tool is None:
         return f"Error: unknown tool '{action.tool_name}'."
     try:
+        foundation = tool
+        while isinstance(foundation, partial):
+            foundation = foundation.func
+        if active_log is not None and (
+            action.tool_name.lower() in {"write", "patch"}
+            or foundation is tool_write or foundation is tool_patch
+        ):
+            # Protect the recorder at the foundation-tool boundary, including
+            # aliases and hard links. This is not a sandbox for shell/plugins.
+            target = (workspace / action.args.strip()).resolve()
+            if target == active_log_path or (
+                target.exists() and os.path.samestat(
+                    target.stat(), os.fstat(active_log.fh.fileno()))
+            ):
+                return "Error: cannot modify the active event log."
         return tool(action.args, action.content, workspace)
     except Exception as e:  # noqa: BLE001 -- tool bugs become results, same as loop.step
         return f"Error: {type(e).__name__}: {e}"
@@ -69,10 +89,31 @@ def run_functional(
     verdict that lifts the suspension. `event_log_path` must equal
     `resume_from` — resuming writes back to the same file.
 
+    Continuations require the recorded model and absolute workspace to match
+    the live inputs. Legacy relative workspace declarations are ambiguous and
+    cannot be resumed. Foundation write/patch tools cannot modify the open log.
+
     `trust_plugins` / `trust_workspace_plugins` are two spellings of the same
     workspace-plugin opt-in (the merged branches named it differently);
     either one loads `<workspace>/.nakedagent/plugins/` via `_build_tools`.
     """
+    workspace = Path(workspace).resolve()
+    parsed = None
+    if resume_from is not None:
+        if event_log_path != resume_from:
+            raise ValueError("resume_from requires event_log_path to name the same file")
+        from .eventlog import open_resumed_log, read_log, require_resumable
+        parsed = read_log(resume_from)
+        require_resumable(parsed, resume_from)
+        header = parsed.header
+        if model != header["model"]:
+            raise RuntimeError("cannot resume: current model differs from recorded model")
+        recorded_workspace = Path(header["workspace"])
+        if not recorded_workspace.is_absolute():
+            raise RuntimeError("cannot resume: recorded workspace is not absolute")
+        if workspace != recorded_workspace.resolve():
+            raise RuntimeError("cannot resume: current workspace differs from recorded workspace")
+
     registry = tools if tools is not None else _build_tools(
         workspace,
         allow_shell=allow_shell,
@@ -84,13 +125,9 @@ def run_functional(
     system_prompt = _system_prompt(registry)
 
     log: EventLogWriter | None = None
-    if resume_from is not None:
-        if event_log_path != resume_from:
-            raise ValueError("resume_from requires event_log_path to name the same file")
-        from .eventlog import open_resumed_log, read_log, require_resumable
+    active_log_path = Path(event_log_path).resolve() if event_log_path is not None else None
+    if parsed is not None:
         from .functional import replay_trace
-        parsed = read_log(resume_from)
-        require_resumable(parsed, resume_from)
         header = parsed.header
         state, chain_ok = replay_trace(
             header["system_prompt"], parsed.events,
@@ -160,7 +197,7 @@ def run_functional(
                 # would run the action with no corresponding ledger entry.
                 if state.is_terminal or state.step_count >= state.max_steps:
                     break
-                result = _dispatch(registry, act, workspace)
+                result = _dispatch(registry, act, workspace, log, active_log_path)
                 feed(AgentEvent("TOOL_RESULT", result, {"tool": act.tool_name}))
                 if state.is_terminal:
                     break
