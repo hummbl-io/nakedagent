@@ -264,14 +264,31 @@ class JevNoulGate:
 # chooses. nakedagent stays stdlib-only.
 Decision0Runner = Callable[[dict], dict]
 
+# Runs in the user's torch Python. Reads the case as JSON on stdin (never argv),
+# scores it with the release's own decide.py, and reports the exact token count
+# of the input pair so the gate can refuse to trust a truncated reading.
+_DECISION0_SCRIPT = r"""
+import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+import decide
+case = json.loads(sys.stdin.read())
+d = decide.Decision0(sys.argv[2], allow_threshold=float(sys.argv[3]))
+first, second = decide.texts(case)
+n_tokens = len(d.tokenizer(first, second)["input_ids"])
+out = d.decide(case)
+out["n_tokens"], out["max_tokens"] = n_tokens, decide.MAX_TOKENS
+print(json.dumps(out))
+"""
+
 
 class Decision0NoulGate:
     """Decision-0-backed pre-execution gate. Routes tri-state:
 
         destructive tripwire matched          -> BLOCK    (checked first)
         no policy file in the workspace       -> ESCALATE (nothing to judge against)
-        action text longer than the model
-          can read in full                    -> ESCALATE (truncation is not judged)
+        task not set                          -> ESCALATE (the model would judge without it)
+        input clearly too long (cheap check)  -> ESCALATE, without scoring
+        input over the model's token window   -> ESCALATE (a truncated reading is not trusted)
         Decision-0 deny                       -> BLOCK
         Decision-0 escalate                   -> ESCALATE
         Decision-0 allow, allow score >= threshold -> ALLOW
@@ -301,24 +318,28 @@ class Decision0NoulGate:
                  allow_threshold: float = 0.99,
                  policy_file: str = ".nakedagent/policy.md",
                  evidence_file: str = ".nakedagent/evidence.md",
-                 max_action_chars: int = 600,
-                 timeout_s: int = 180,
+                 max_input_chars: int = 1000,
+                 timeout_s: float = 180,
                  runner: Decision0Runner | None = None,
                  tripwire: Any = None):
         if (type(allow_threshold) not in (int, float)
                 or not math.isfinite(allow_threshold)
                 or not 0 < allow_threshold <= 1):
             raise ValueError("allow_threshold must satisfy 0 < t <= 1")
-        if type(max_action_chars) is not int or max_action_chars < 1:
-            raise ValueError("max_action_chars must be a positive int")
+        if type(max_input_chars) is not int or max_input_chars < 1:
+            raise ValueError("max_input_chars must be a positive int")
+        # A missing or non-positive timeout would let a hung scorer hang the turn.
+        if (type(timeout_s) not in (int, float) or not math.isfinite(timeout_s)
+                or timeout_s <= 0):
+            raise ValueError("timeout_s must be a positive number")
         self.decide_py = decide_py or os.environ.get("NAKEDAGENT_DECISION0_DECIDE_PY")
         self.model = model
         self.python = python or os.environ.get("NAKEDAGENT_DECISION0_PYTHON") or sys.executable
         self.allow_threshold = float(allow_threshold)
         self.policy_file = policy_file
         self.evidence_file = evidence_file
-        self.max_action_chars = max_action_chars
-        self.timeout_s = timeout_s
+        self.max_input_chars = max_input_chars
+        self.timeout_s = float(timeout_s)
         self.runner = runner or self._subprocess_runner
         if tripwire is None:
             from .sidekick import (
@@ -345,19 +366,25 @@ class Decision0NoulGate:
     def _subprocess_runner(self, case: dict) -> dict:
         if not self.decide_py:
             raise RuntimeError("decide.py path not set (decide_py or NAKEDAGENT_DECISION0_DECIDE_PY)")
-        cmd = [self.python, str(self.decide_py), "--model", self.model,
-               "--allow-threshold", repr(self.allow_threshold)]
-        for key in ("policy", "evidence", "task", "action"):
-            cmd += [f"--{key}", case[key]]
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                             timeout=self.timeout_s, check=False)
+        cmd = [self.python, "-c", _DECISION0_SCRIPT, str(self.decide_py), self.model,
+               repr(self.allow_threshold)]
+        res = subprocess.run(cmd, input=json.dumps(case), capture_output=True, text=True,
+                             encoding="utf-8", timeout=self.timeout_s, check=False)
         if res.returncode != 0:
-            raise RuntimeError(f"decide.py exit {res.returncode}: {res.stderr[-300:]}")
-        return json.loads(res.stdout)
+            raise RuntimeError(f"decision-0 scorer exit {res.returncode}: {res.stderr[-300:]}")
+        return json.loads(res.stdout.strip().splitlines()[-1])
+
+    @staticmethod
+    def _count(value: Any, name: str) -> int:
+        if type(value) is not int or value < 1:
+            raise ValueError(f"{name} missing or invalid")
+        return value
 
     def route_action(self, action: ToolAction,
                      workspace: Path) -> tuple[str, float, str]:
-        """Tri-state routing: (route, p_risk, reason). p_risk = 1 - allow score."""
+        """Tri-state routing: (route, p_risk, reason). When the model is
+        consulted p_risk = 1 - allow score; pre-checks that escalate without
+        scoring record 1.0, and fail-closed blocks record -1.0."""
         trip, trip_risk, trip_reason = self.tripwire.route_action(action, workspace)
         if trip != "ALLOW":
             return trip, trip_risk, f"decision0-gate tripwire: {trip_reason}"
@@ -365,16 +392,21 @@ class Decision0NoulGate:
         if not policy:
             return "ESCALATE", 1.0, (f"decision0-gate: no policy at {self.policy_file}; "
                                      "nothing to judge the action against")
-        text = self.action_text(action)
-        if len(text) > self.max_action_chars:
-            return "ESCALATE", 1.0, (f"decision0-gate: action is {len(text)} chars, over "
-                                     f"{self.max_action_chars}; Decision-0 would not read it in full")
+        task = self.task.strip() if isinstance(self.task, str) else ""
+        if not task:
+            return "ESCALATE", 1.0, "decision0-gate: task not set (set gate.task before run_turn)"
         case = {"policy": policy, "evidence": self._read(workspace, self.evidence_file),
-                "task": self.task if isinstance(self.task, str) else "", "action": text}
+                "task": task, "action": self.action_text(action)}
+        size = sum(len(v) for v in case.values())
+        if size > self.max_input_chars:
+            return "ESCALATE", 1.0, (f"decision0-gate: input is {size} chars, over "
+                                     f"{self.max_input_chars}; Decision-0 would not read it in full")
         try:
             out = self.runner(case)
             label = out["label"]
             allow = out["scores"]["allow"]
+            n_tokens = self._count(out.get("n_tokens"), "n_tokens")
+            max_tokens = self._count(out.get("max_tokens"), "max_tokens")
             if label not in ("allow", "deny", "escalate"):
                 raise ValueError(f"unknown label {label!r}")
             if isinstance(allow, bool) or not isinstance(allow, (int, float)):
@@ -384,6 +416,9 @@ class Decision0NoulGate:
                 raise ValueError("allow score outside [0, 1]")
         except Exception as e:  # noqa: BLE001 -- fail-closed: any runner fault is a BLOCK
             return "BLOCK", GATE_UNREACHABLE, f"decision0-gate unavailable (fail-closed): {e}"
+        if n_tokens > max_tokens:
+            return "ESCALATE", 1.0, (f"decision0-gate: input is {n_tokens} tokens, over the "
+                                     f"model's {max_tokens}; a truncated reading is not trusted")
         p_risk = 1.0 - allow
         if label == "deny":
             return "BLOCK", p_risk, f"decision-0 deny (allow={allow:.4f})"
