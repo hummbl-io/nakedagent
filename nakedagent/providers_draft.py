@@ -271,7 +271,7 @@ _DECISION0_SCRIPT = r"""
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
 import decide
-case = json.loads(sys.stdin.read())
+case = json.loads(sys.stdin.buffer.read().decode("utf-8"))  # input is ASCII JSON; UTF-8 is a safeguard
 d = decide.Decision0(sys.argv[2], allow_threshold=float(sys.argv[3]))
 first, second = decide.texts(case)
 n_tokens = len(d.tokenizer(first, second)["input_ids"])
@@ -295,15 +295,17 @@ class Decision0NoulGate:
         Decision-0 allow below the threshold  -> ESCALATE
         runner error, timeout, malformed reply -> BLOCK    (fail-closed)
 
-    Decision-0 is advisory: on its sealed test it wrongly allowed about 1.2%
-    of should-not-proceed actions at the strict threshold 0.99. Keep a
-    person on the ESCALATE path and use it only where a wrong allow is cheap
-    to undo.
+    Decision-0 is advisory: at the strict threshold 0.99 it wrongly allowed
+    1.2% of should-not-proceed actions on its sealed Test F and 4.2% on
+    Test E. Keep a person on the ESCALATE path and use it only where a wrong
+    allow is cheap to undo.
 
     The harness passes only (action, workspace), so the caller supplies the
     user's request: set `gate.task` before each `run_turn`. The policy comes
     from `<workspace>/.nakedagent/policy.md` and optional evidence from
-    `<workspace>/.nakedagent/evidence.md` (paths configurable).
+    `<workspace>/.nakedagent/evidence.md`. Both paths are operator
+    configuration and are joined to the workspace as given, so an absolute
+    path or `..` can point outside it.
 
     `decide_py` is the `decide.py` shipped in the Decision-0 release and
     `model` its repo id or, better, a local snapshot directory of a pinned

@@ -87,12 +87,13 @@ class Decision0GateTests(unittest.TestCase):
         self.assertEqual((route, rec.cases), ("ESCALATE", []))
         self.assertIn("no policy", reason)
 
-    def test_input_over_the_token_window_escalates_even_on_allow(self):
-        for n in (193, 400):
-            with self.subTest(n_tokens=n):
-                route, risk, reason = self.route(Recorder(reply("allow", 0.999, n_tokens=n)))
-                self.assertEqual((route, risk), ("ESCALATE", 1.0))
-                self.assertIn("not trusted", reason)
+    def test_input_over_the_token_window_escalates_whatever_the_label(self):
+        for label in ("allow", "deny", "escalate"):
+            for n in (193, 400):
+                with self.subTest(label=label, n_tokens=n):
+                    route, risk, reason = self.route(Recorder(reply(label, 0.999, n_tokens=n)))
+                    self.assertEqual((route, risk), ("ESCALATE", 1.0))
+                    self.assertIn("not trusted", reason)
         self.assertEqual(self.route(Recorder(reply("allow", 0.999, n_tokens=192)))[0], "ALLOW")
 
     def test_malformed_replies_and_runner_faults_fail_closed(self):
@@ -102,6 +103,7 @@ class Decision0GateTests(unittest.TestCase):
                {**ok, "scores": {"allow": -0.1}}, {**ok, "scores": {"allow": True}},
                {**ok, "scores": {"allow": "0.999"}}, {k: v for k, v in ok.items() if k != "n_tokens"},
                {**ok, "n_tokens": "60"}, {**ok, "n_tokens": True}, {**ok, "max_tokens": 0},
+               {k: v for k, v in ok.items() if k != "max_tokens"},
                ["allow"], None]
         for out in bad:
             with self.subTest(out=repr(out)[:60]):
@@ -136,10 +138,45 @@ class Decision0GateTests(unittest.TestCase):
         self.assertEqual(cmd[0:2], ["/py", "-c"])
         self.assertEqual(cmd[3:], ["/opt/d0/decide.py", "/opt/d0", "0.99"])
         self.assertNotIn(POLICY, cmd)  # case text never on the command line
+        self.assertTrue(kw["input"].isascii())  # escaped JSON: no codepage can garble it
         self.assertEqual(json.loads(kw["input"]), {"policy": POLICY, "evidence": "Ticket T-1.",
                                                    "task": "Find the bug.", "action": "read notes.txt"})
         self.assertFalse(kw.get("shell", False))
         self.assertEqual(kw["timeout"], 180.0)
+
+    def test_non_ascii_text_survives_the_scorer_round_trip(self):
+        # Runs the real child script against a stdlib stub of decide.py, with the
+        # UTF-8 overrides removed. The case crosses stdin as ASCII-only JSON
+        # (json.dumps escapes non-ASCII), so the child's locale codepage cannot
+        # garble it; the child also decodes stdin as UTF-8 in case that changes.
+        stub = (
+            "import json\nMAX_TOKENS = 192\n"
+            "def texts(c):\n    return ('Policy: ' + c['policy'] + ' Evidence: ' + c['evidence'],\n"
+            "            'Task: ' + c['task'] + ' Proposed action: ' + c['action'])\n"
+            "class Decision0:\n"
+            "    def __init__(self, model, allow_threshold=0.99):\n        self.t = allow_threshold\n"
+            "    def tokenizer(self, a, b):\n        return {'input_ids': [0] * 10}\n"
+            "    def decide(self, case):\n"
+            "        return {'label': 'allow', 'reason': case['policy'],\n"
+            "                'scores': {'allow': 0.999, 'deny': 0.0, 'escalate': 0.001}}\n")
+        (self.ws / "decide.py").write_text(stub, encoding="utf-8")
+        policy = "Café staff may read the naïve-Bayes logs — nothing else."
+        (self.ws / ".nakedagent" / "policy.md").write_text(policy, encoding="utf-8")
+        gate = draft.Decision0NoulGate(decide_py=self.ws / "decide.py", model="stub")
+        gate.task = "Résumé the logs."
+        seen = []
+        real = gate._subprocess_runner
+
+        def runner(case):
+            out = real(case)
+            seen.append(out["reason"])
+            return out
+
+        gate.runner = runner
+        env = {k: v for k, v in draft.os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        with patch.dict(draft.os.environ, env, clear=True):
+            route, _, _ = gate.route_action(ToolAction("read", "logs.txt", ""), self.ws)
+        self.assertEqual((route, seen), ("ALLOW", [policy]))
 
     def test_subprocess_runner_without_decide_py_fails_closed(self):
         with patch.dict(draft.os.environ, {}, clear=True):

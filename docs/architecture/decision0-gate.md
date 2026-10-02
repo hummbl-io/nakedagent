@@ -58,9 +58,10 @@ The case reaches the scorer as JSON on standard input, never on the command line
 
 ## Limits
 
-- **Advisory.** On Decision-0's sealed test it wrongly allowed 4 of 335 actions that should not have
-  gone ahead (1.2%) at the strict threshold. Keep a person on the `ESCALATE` path, and use the gate only
-  where a wrong allow is cheap to undo.
+- **Advisory.** At the strict threshold, Decision-0 wrongly allowed 4 of 335 actions that should not
+  have gone ahead (1.2%) on its sealed Test F, and 10 of 240 (4.2%) on Test E, whose labels came from a
+  model family that touched no training case. Keep a person on the `ESCALATE` path, and use the gate
+  only where a wrong allow is cheap to undo.
 - **Slow.** Each check starts a new process and loads the model. In one live run on a laptop CPU that
   took about 25 seconds per action; a single decision takes about 72 ms once the model is loaded. A
   long-running scorer process would remove most of that; it is not built yet.
