@@ -18,8 +18,8 @@ package to exist first) is a separate decision: see `docs/TRUSTED_PUBLISHING_MAT
 
 ## Built-in modules used
 
-`node:fs`, `node:path`, `node:os`, `node:child_process`, `node:readline/promises`, `node:util` (`parseArgs`), `node:url` and
-the globals `fetch`, `URL`, `AbortSignal`, `TextDecoder`, `Buffer`. Tests also use `node:test`, `node:assert/strict` and
+`node:fs`, `node:path`, `node:os`, `node:child_process`, `node:readline/promises`, `node:util` (`parseArgs`) and
+the globals `fetch`, `URL`, `AbortSignal`, `TextDecoder`, `Buffer`. Tests also use `node:url`, `node:test`, `node:assert/strict` and
 `node:http`.
 
 ## Library use and the plugin seam
