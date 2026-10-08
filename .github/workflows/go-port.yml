@@ -1,0 +1,51 @@
+name: Go port
+
+on:
+  push:
+    paths:
+      - "ports/go/**"
+      - "spec/**"
+      - ".github/workflows/go-port.yml"
+  pull_request:
+    paths:
+      - "ports/go/**"
+      - "spec/**"
+      - ".github/workflows/go-port.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: ports/go
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: ports/go/go.mod
+          cache: false
+      - name: Zero dependencies
+        shell: bash
+        run: |
+          if grep -E '^(require|replace)\b' go.mod; then
+            echo "ERROR: go.mod declares dependencies; the port must be stdlib-only."
+            exit 1
+          fi
+          test ! -e go.sum || { echo "ERROR: go.sum present"; exit 1; }
+          echo "OK: no module dependencies."
+      - name: gofmt
+        shell: bash
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: Conformance vectors and unit tests
+        run: go test -count=1 -v ./...
