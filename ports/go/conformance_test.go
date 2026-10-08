@@ -140,6 +140,19 @@ func TestPatchSplit(t *testing.T) {
 	}
 }
 
+func writeFiles(t *testing.T, dir string, files map[string]any) {
+	t.Helper()
+	for rel, v := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, decodeBytes(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func newWorkspace(t *testing.T, files map[string]any) string {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -150,24 +163,45 @@ func newWorkspace(t *testing.T, files map[string]any) string {
 	if err := os.Mkdir(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for rel, v := range files {
-		p := filepath.Join(ws, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	writeFiles(t, ws, files)
+	return ws
+}
+
+// newCaseRoot builds the workspace plus, for cases with `outside` or `symlinks`, the sibling
+// `outside` directory and the symlink fixtures. It skips the test where symlinks cannot be made.
+func newCaseRoot(t *testing.T, c vector) (ws, outside string) {
+	t.Helper()
+	files, _ := c["files"].(map[string]any)
+	ws = newWorkspace(t, files)
+	_, hasOutside := c["outside"]
+	links, hasLinks := c["symlinks"].(map[string]any)
+	if !hasOutside && !hasLinks {
+		return ws, ""
+	}
+	outside = filepath.Join(filepath.Dir(ws), "outside")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	of, _ := c["outside"].(map[string]any)
+	writeFiles(t, outside, of)
+	for rel, target := range links {
+		lp := filepath.Join(ws, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(lp), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, decodeBytes(v), 0o644); err != nil {
-			t.Fatal(err)
+		if err := os.Symlink(filepath.FromSlash(target.(string)), lp); err != nil {
+			t.Skipf("cannot create symlinks here: %v", err)
 		}
 	}
-	return ws
+	return ws, outside
 }
 
 func snapshot(t *testing.T, ws string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	filepath.Walk(ws, func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
+		if err != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil // symlinks are fixtures, not tool output
 		}
 		rel, _ := filepath.Rel(ws, p)
 		rel = filepath.ToSlash(rel)
@@ -185,8 +219,10 @@ func TestFsTools(t *testing.T) {
 	fns := map[string]ToolFunc{"read": ToolRead, "write": ToolWrite, "patch": ToolPatch}
 	for i, c := range loadSuite(t, "fs_tools") {
 		t.Run(caseName(i, c), func(t *testing.T) {
-			files, _ := c["files"].(map[string]any)
-			ws := newWorkspace(t, files)
+			if runtime.GOOS == "windows" && c["requires"] == "posix" {
+				t.Skip("POSIX-only vector")
+			}
+			ws, outside := newCaseRoot(t, c)
 			got, err := fns[c["tool"].(string)](str(c, "args"), str(c, "content"), ws)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -201,6 +237,15 @@ func TestFsTools(t *testing.T) {
 			}
 			if gotFiles := snapshot(t, ws); !reflect.DeepEqual(gotFiles, wantFiles) {
 				t.Fatalf("files:\n got %v\nwant %v", keys(gotFiles), keys(wantFiles))
+			}
+			if outside != "" {
+				wantOutside := map[string]string{}
+				for rel, v := range exp["outside_files"].(map[string]any) {
+					wantOutside[rel] = decodeText(v)
+				}
+				if gotOutside := snapshot(t, outside); !reflect.DeepEqual(gotOutside, wantOutside) {
+					t.Fatalf("outside files changed:\n got %v\nwant %v", gotOutside, wantOutside)
+				}
 			}
 		})
 	}
