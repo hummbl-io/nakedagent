@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <!-- Default to .NET 9; override with -p:NG_TFM=net10.0 where only the 10.0 SDK is installed. -->
+    <TargetFramework Condition="'$(NG_TFM)' == ''">net9.0</TargetFramework>
+    <TargetFramework Condition="'$(NG_TFM)' != ''">$(NG_TFM)</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>
