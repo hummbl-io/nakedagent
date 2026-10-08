@@ -1,0 +1,20 @@
+{
+  "name": "nakedagent",
+  "version": "0.1.0-dev",
+  "description": "nakedagent for Node.js: a terminal coding agent with zero dependencies (spec v0.1 foundation)",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.14"
+  },
+  "bin": {
+    "nakedagent": "bin/nakedagent.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
