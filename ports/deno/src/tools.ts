@@ -266,7 +266,7 @@ export async function toolShell(
   // so the timeout kills the child by hand.
   let timedOut = false;
   let out: Deno.CommandOutput;
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const child = new Deno.Command(exe, {
       args: argv.slice(1),
