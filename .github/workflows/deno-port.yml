@@ -1,0 +1,54 @@
+name: Deno port
+
+on:
+  push:
+    paths:
+      - "ports/deno/**"
+      - "spec/**"
+      - ".github/workflows/deno-port.yml"
+  pull_request:
+    paths:
+      - "ports/deno/**"
+      - "spec/**"
+      - ".github/workflows/deno-port.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: ports/deno
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Zero dependencies
+        shell: bash
+        run: |
+          if grep -rEn "(from|import)[^;]*[\"'](jsr:|npm:|https?://)" mod.ts main.ts src test; then
+            echo "ERROR: remote or registry import found; the port must use only the runtime and node: built-ins."
+            exit 1
+          fi
+          if grep -E '"imports"[[:space:]]*:[[:space:]]*\{[^}]' deno.json; then
+            echo "ERROR: deno.json declares import mappings."
+            exit 1
+          fi
+          test ! -e deno.lock || { echo "ERROR: deno.lock present"; exit 1; }
+          echo "OK: no external imports."
+      - name: Format, lint and type-check
+        run: |
+          deno fmt --check
+          deno lint
+          deno check mod.ts main.ts test/conformance_test.ts
+      - name: Conformance vectors
+        run: deno test --allow-read --allow-write --allow-run --allow-net --allow-env
