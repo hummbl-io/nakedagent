@@ -15,5 +15,6 @@ value per line in the same order. Output is compared after JSON parsing, so esca
 
 * Go: `DIFF_IN=cases.jsonl DIFF_OUT=out_go.jsonl go test -run TestDifferentialHarness ./ports/go` (skipped unless `DIFF_IN` is set)
 * Node: `node ports/node/tools/diff-harness.mjs cases.jsonl > out_node.jsonl`
+* Deno: `deno run --allow-read ports/deno/tools/diff-harness.ts cases.jsonl > out_deno.jsonl`
 
 When a mismatch is real, add the failing input to `build_vectors.py` so it becomes a permanent vector, then fix the port.
