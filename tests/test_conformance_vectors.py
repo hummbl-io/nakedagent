@@ -58,7 +58,10 @@ def _make(suite_name, case):
             suite_name in POSIX_ONLY_SUITES or case.get("requires") == "posix"
         ):
             self.skipTest("POSIX-only vector")
-        actual = rr.SUITES[suite_name](case)
+        try:
+            actual = rr.SUITES[suite_name](case)
+        except rr.SymlinkUnavailable as e:
+            self.skipTest(f"cannot create symlinks here: {e}")
         if suite_name == "llm_wire":
             _check_llm(self, case, actual)
         else:

@@ -390,6 +390,149 @@
       }
     },
     {
+      "name": "read through a symlink that points outside the workspace",
+      "tool": "read",
+      "args": "link/secret.txt",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "secret.txt": "top secret"
+      },
+      "symlinks": {
+        "link": "../outside"
+      },
+      "expect": {
+        "result": "Error: link/secret.txt is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "secret.txt": "top secret"
+        }
+      }
+    },
+    {
+      "name": "read through a symlink that stays inside the workspace",
+      "tool": "read",
+      "args": "inlink/a.txt",
+      "requires": "symlink",
+      "files": {
+        "sub/a.txt": "inside"
+      },
+      "symlinks": {
+        "inlink": "sub"
+      },
+      "expect": {
+        "result": "inside",
+        "files": {
+          "sub/a.txt": "inside"
+        },
+        "outside_files": {}
+      }
+    },
+    {
+      "name": "dotdot after a symlink applies to the link target",
+      "tool": "read",
+      "args": "link2/../a.txt",
+      "requires": "posix",
+      "files": {
+        "sub/a.txt": "in sub",
+        "sub/deeper/b.txt": "b"
+      },
+      "symlinks": {
+        "link2": "sub/deeper"
+      },
+      "expect": {
+        "result": "in sub",
+        "files": {
+          "sub/a.txt": "in sub",
+          "sub/deeper/b.txt": "b"
+        },
+        "outside_files": {}
+      }
+    },
+    {
+      "name": "write through an outside symlink is refused and writes nothing",
+      "tool": "write",
+      "args": "link/new.txt",
+      "content": "x",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "keep.txt": "k"
+      },
+      "symlinks": {
+        "link": "../outside"
+      },
+      "expect": {
+        "result": "Error: link/new.txt is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "keep.txt": "k"
+        }
+      }
+    },
+    {
+      "name": "write to a dangling symlink whose target is outside is refused",
+      "tool": "write",
+      "args": "dl",
+      "content": "x",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "keep.txt": "k"
+      },
+      "symlinks": {
+        "dl": "../outside/newfile"
+      },
+      "expect": {
+        "result": "Error: dl is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "keep.txt": "k"
+        }
+      }
+    },
+    {
+      "name": "patch through an outside symlink is refused and leaves the file",
+      "tool": "patch",
+      "args": "link/f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "f.txt": "foo"
+      },
+      "symlinks": {
+        "link": "../outside"
+      },
+      "expect": {
+        "result": "Error: link/f.txt is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "f.txt": "foo"
+        }
+      }
+    },
+    {
+      "name": "protected directory is still protected when reached through a symlink",
+      "tool": "write",
+      "args": "g/config",
+      "content": "x",
+      "requires": "symlink",
+      "files": {
+        ".git/config": "c"
+      },
+      "symlinks": {
+        "g": ".git"
+      },
+      "expect": {
+        "result": "Error: g/config is in protected directory '.git'.",
+        "files": {
+          ".git/config": "c"
+        },
+        "outside_files": {}
+      }
+    },
+    {
       "name": "patch replaces unique match",
       "tool": "patch",
       "args": "f.txt",
