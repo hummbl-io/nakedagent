@@ -140,6 +140,22 @@ FS = [
          content="x", files={}),
     dict(name="write path starting with .github is allowed", tool="write", args=".github/ci.yml",
          content="x", files={}),
+    # ---- symlinks (fixtures: `symlinks` maps a path in the workspace to a link target, `outside` fills a
+    #      sibling directory `../outside`; the vector is skipped where symlinks cannot be created)
+    dict(name="read through a symlink that points outside the workspace", tool="read", args="link/secret.txt",
+         requires="symlink", files={}, outside={"secret.txt": "top secret"}, symlinks={"link": "../outside"}),
+    dict(name="read through a symlink that stays inside the workspace", tool="read", args="inlink/a.txt",
+         requires="symlink", files={"sub/a.txt": "inside"}, symlinks={"inlink": "sub"}),
+    dict(name="dotdot after a symlink applies to the link target", tool="read", args="link2/../a.txt",
+         requires="posix", files={"sub/a.txt": "in sub", "sub/deeper/b.txt": "b"}, symlinks={"link2": "sub/deeper"}),
+    dict(name="write through an outside symlink is refused and writes nothing", tool="write", args="link/new.txt",
+         content="x", requires="symlink", files={}, outside={"keep.txt": "k"}, symlinks={"link": "../outside"}),
+    dict(name="write to a dangling symlink whose target is outside is refused", tool="write", args="dl",
+         content="x", requires="symlink", files={}, outside={"keep.txt": "k"}, symlinks={"dl": "../outside/newfile"}),
+    dict(name="patch through an outside symlink is refused and leaves the file", tool="patch", args="link/f.txt",
+         content=_PATCH_OK, requires="symlink", files={}, outside={"f.txt": "foo"}, symlinks={"link": "../outside"}),
+    dict(name="protected directory is still protected when reached through a symlink", tool="write",
+         args="g/config", content="x", requires="symlink", files={".git/config": "c"}, symlinks={"g": ".git"}),
     # ---- patch
     dict(name="patch replaces unique match", tool="patch", args="f.txt", content=_PATCH_OK,
          files={"f.txt": "a\nfoo\nb\n"}),

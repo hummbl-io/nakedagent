@@ -212,7 +212,7 @@ owner decision before it is fixed in the reference or frozen into the spec.
    characters to `\n` inside SEARCH/REPLACE text. The tool-call parser deliberately avoids this; `patch` does not.
 4. **Empty SEARCH text matches everywhere** (`n + 1` locations for an `n`-character file), so it always reports "matches N locations".
    Harmless but surprising; one vector pins it.
-5. **No symlink-escape vector.** The workspace guard resolves symlinks (section 5) but the vectors cannot create symlinks portably.
-   Each port must add a native test for a symlink pointing outside the workspace.
-6. **Directory listing order** is by code point (`sorted()`), which differs from UTF-16 code-unit order for non-BMP names (JavaScript, Java, C#).
-7. **Interactive shell confirmation** (TTY prompt and `shell=True`) is not specified; only the non-interactive policy is.
+5. **Symlink fixtures need privilege on Windows.** The symlink-escape vectors (`requires: symlink`) create real symlinks, which Windows only allows with Developer Mode or elevation; a runner skips them where creation fails. On every other platform they are mandatory.
+6. **`..` after a symlink differs by OS in the reference.** On POSIX `Path.resolve()` follows a symlink and then applies `..` to the link's target (`link/../a.txt` with `link -> sub/deeper` is `sub/a.txt`), which is what the operating system does and what this spec requires. On Windows the reference collapses `..` lexically first (`ws/a.txt`). The vector for this (`requires: posix`) pins the POSIX meaning; a port should follow the OS on every platform.
+7. **Directory listing order** is by code point (`sorted()`), which differs from UTF-16 code-unit order for non-BMP names (JavaScript, Java, C#).
+8. **Interactive shell confirmation** (TTY prompt and `shell=True`) is not specified; only the non-interactive policy is.

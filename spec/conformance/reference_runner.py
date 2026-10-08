@@ -97,7 +97,7 @@ def _write_files(root: Path, files: dict) -> None:
 def _snapshot(root: Path) -> dict:
     out = {}
     for p in sorted(root.rglob("*")):
-        if p.is_file():
+        if p.is_file() and not p.is_symlink():
             rel = p.relative_to(root).as_posix()
             if rel.startswith(".nakedagent/"):
                 continue  # audit log is not part of the tool contract
@@ -130,15 +130,33 @@ def run_patch_split(case: dict):
 _FS_TOOLS = {"read": tools.tool_read, "write": tools.tool_write, "patch": tools.tool_patch}
 
 
+class SymlinkUnavailable(Exception):
+    """Raised when the platform refuses to create a symlink fixture (for example Windows without privilege)."""
+
+
 def run_fs(case: dict):
     with tempfile.TemporaryDirectory() as td:
         ws = Path(td) / "ws"
+        outside = Path(td) / "outside"  # sibling of the workspace, for escape cases
         ws.mkdir()
         _write_files(ws, case.get("files", {}))
+        if "outside" in case or "symlinks" in case:
+            outside.mkdir()
+            _write_files(outside, case.get("outside", {}))
+        for link, target in case.get("symlinks", {}).items():
+            lp = ws / link
+            lp.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.symlink(target, lp, target_is_directory=(lp.parent / target).is_dir())
+            except (OSError, NotImplementedError) as e:
+                raise SymlinkUnavailable(str(e)) from e
         result = _FS_TOOLS[case["tool"]](
             case.get("args", ""), decode_text(case.get("content", "")), ws
         )
-        return {"result": encode_text(result), "files": _snapshot(ws)}
+        out = {"result": encode_text(result), "files": _snapshot(ws)}
+        if "outside" in case or "symlinks" in case:
+            out["outside_files"] = _snapshot(outside)
+        return out
 
 
 def run_allowlist(case: dict):

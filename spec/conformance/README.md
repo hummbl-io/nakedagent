@@ -3,13 +3,13 @@
 Language-neutral JSON test vectors for the nakedagent foundation contract (`../SPEC.md`).
 Each `vectors/<suite>.json` is `{"suite": name, "cases": [...]}`. Value encoding
 (`repeat`, `concat`, `b64`) is defined in SPEC section 3. A case with `"requires": "posix"`
-may be skipped on Windows; the whole `shell_allowlist` and `shell_policy` suites are POSIX-only.
+may be skipped on Windows, and one with `"requires": "symlink"` may be skipped where symlinks cannot be created; the whole `shell_allowlist` and `shell_policy` suites are POSIX-only.
 
 | Suite | Case fields | How a port runner checks it |
 |---|---|---|
 | `toolcall` | `input` | parse `input`; result equals `expect` (list of `{tool,args,content}`) |
 | `patch_split` | `input` | split the search/replace block; `expect` is `{search,replace}` or `{error}` (exact message) |
-| `fs_tools` | `tool`, `args`, `content`, `files` | create a temp workspace holding `files`, call the tool, compare the returned string to `expect.result` and every file under the workspace (ignoring `.nakedagent/`) to `expect.files` |
+| `fs_tools` | `tool`, `args`, `content`, `files`, `outside`, `symlinks` | create a temp root holding the workspace `ws/` (filled from `files`) and, when the case has `outside` or `symlinks`, a sibling directory `outside/` (filled from `outside`); create each `symlinks` entry as a symlink at that workspace path pointing at the given target text (for example `../outside`), skipping the case if symlinks cannot be created; call the tool; compare the returned string to `expect.result`, every regular file under `ws/` (ignoring `.nakedagent/` and the symlinks themselves) to `expect.files`, and every file under `outside/` to `expect.outside_files` |
 | `shell_allowlist` | `command`, `allowlist` | allowlist match equals `expect` (boolean) |
 | `shell_policy` | `args`, `content`, `allow_shell`, `shell_allowlist`, `shell_timeout` | non-interactive shell tool in a temp workspace with stdin not a TTY; returned string equals `expect` |
 | `prompt` | `extra_tools_without_usage` | build the system prompt over the four foundation tools plus the extra usage-less tools; equals `expect` |
