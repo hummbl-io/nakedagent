@@ -38,16 +38,41 @@ function decodeBytes(v) {
   return Buffer.from(decodeText(v), 'utf8');
 }
 
+function writeFiles(dir, files = {}) {
+  for (const [rel, v] of Object.entries(files)) {
+    const p = path.join(dir, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, decodeBytes(v));
+  }
+}
+
 function newWorkspace(files = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ng-node-')));
   const ws = path.join(root, 'ws');
   fs.mkdirSync(ws);
-  for (const [rel, v] of Object.entries(files)) {
-    const p = path.join(ws, ...rel.split('/'));
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, decodeBytes(v));
-  }
+  writeFiles(ws, files);
   return ws;
+}
+
+// Workspace plus, for cases with `outside` or `symlinks`, the sibling `outside` directory and the
+// symlink fixtures. Returns { ws, outside, skip } where skip is set if symlinks cannot be created here.
+function newCaseRoot(c) {
+  const ws = newWorkspace(c.files);
+  if (!('outside' in c) && !('symlinks' in c)) return { ws, outside: null, skip: false };
+  const outside = path.join(path.dirname(ws), 'outside');
+  fs.mkdirSync(outside);
+  writeFiles(outside, c.outside);
+  for (const [rel, target] of Object.entries(c.symlinks ?? {})) {
+    const lp = path.join(ws, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(lp), { recursive: true });
+    try {
+      const isDir = fs.existsSync(path.resolve(path.dirname(lp), target)) && fs.statSync(path.resolve(path.dirname(lp), target)).isDirectory();
+      fs.symlinkSync(target.split('/').join(path.sep), lp, isDir ? 'dir' : 'file');
+    } catch {
+      return { ws, outside, skip: true };
+    }
+  }
+  return { ws, outside, skip: false };
 }
 
 function snapshot(ws) {
@@ -55,6 +80,7 @@ function snapshot(ws) {
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
+      if (e.isSymbolicLink()) continue; // fixtures, not tool output
       if (e.isDirectory()) walk(p);
       else {
         const rel = path.relative(ws, p).split(path.sep).join('/');
@@ -99,11 +125,13 @@ for (const c of loadSuite('patch_split')) {
 
 const FS_TOOLS = { read: toolRead, write: toolWrite, patch: toolPatch };
 for (const c of loadSuite('fs_tools')) {
-  test(`fs_tools: ${c.name}`, () => {
-    const ws = newWorkspace(c.files);
+  test(`fs_tools: ${c.name}`, { skip: skipPosix(c) }, (t) => {
+    const { ws, outside, skip } = newCaseRoot(c);
+    if (skip) return t.skip('cannot create symlinks here');
     const got = FS_TOOLS[c.tool](c.args ?? '', decodeText(c.content), ws);
     assert.equal(got, decodeText(c.expect.result));
     expectFiles(ws, c.expect.files);
+    if (outside) expectFiles(outside, c.expect.outside_files);
   });
 }
 
