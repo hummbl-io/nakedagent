@@ -1,0 +1,43 @@
+name: Node port
+
+on:
+  push:
+    paths:
+      - "ports/node/**"
+      - "spec/**"
+      - ".github/workflows/node-port.yml"
+  pull_request:
+    paths:
+      - "ports/node/**"
+      - "spec/**"
+      - ".github/workflows/node-port.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: ["22", "24"]
+    defaults:
+      run:
+        working-directory: ports/node
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Zero dependencies
+        shell: bash
+        run: |
+          node -e "const p=require('./package.json'); for (const k of ['dependencies','devDependencies','optionalDependencies','peerDependencies']) if (p[k] && Object.keys(p[k]).length) { console.error('ERROR: '+k+' is not empty'); process.exit(1) }"
+          test ! -e package-lock.json || { echo "ERROR: package-lock.json present"; exit 1; }
+          echo "OK: no package dependencies."
+      - name: Conformance vectors
+        run: node --test
