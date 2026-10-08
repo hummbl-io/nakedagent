@@ -1,0 +1,185 @@
+{
+  "suite": "shell_policy",
+  "cases": [
+    {
+      "name": "no command",
+      "content": "",
+      "args": "",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "expect": "Error: shell tool got no command."
+    },
+    {
+      "name": "whitespace-only command",
+      "content": "   \n",
+      "args": "",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "expect": "Error: shell tool got no command."
+    },
+    {
+      "name": "non-positive timeout",
+      "content": "ls",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "shell_timeout": 0,
+      "expect": "Error: --shell-timeout must be a positive integer."
+    },
+    {
+      "name": "negative timeout",
+      "content": "ls",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "shell_timeout": -5,
+      "expect": "Error: --shell-timeout must be a positive integer."
+    },
+    {
+      "name": "blocked without allow_shell",
+      "content": "ls",
+      "allow_shell": false,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "expect": "Error: shell execution blocked (non-interactive shell execution requires --allow-shell)."
+    },
+    {
+      "name": "blocked without allow_shell and no allowlist",
+      "content": "ls",
+      "allow_shell": false,
+      "expect": "Error: shell execution blocked (non-interactive shell execution requires --allow-shell)."
+    },
+    {
+      "name": "allow_shell but empty allowlist",
+      "content": "ls",
+      "allow_shell": true,
+      "shell_allowlist": [],
+      "expect": "Error: shell execution blocked (non-interactive command is not in --shell-allowlist)."
+    },
+    {
+      "name": "allow_shell but not in allowlist",
+      "content": "rm -rf x",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "expect": "Error: shell execution blocked (non-interactive command is not in --shell-allowlist)."
+    },
+    {
+      "name": "chained command not in allowlist",
+      "content": "ls; rm -rf x",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "ls"
+      ],
+      "expect": "Error: shell execution blocked (non-interactive command is not in --shell-allowlist)."
+    },
+    {
+      "name": "malformed quoting is blocked by the allowlist check",
+      "content": "echo \"abc",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "echo"
+      ],
+      "expect": "Error: shell execution blocked (non-interactive command is not in --shell-allowlist)."
+    },
+    {
+      "name": "program not on PATH",
+      "content": "nakedagent-no-such-program-zzz",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "nakedagent-no-such-program-zzz"
+      ],
+      "expect": "Error: 'nakedagent-no-such-program-zzz' is not an executable on PATH. Non-interactive mode runs programs directly without a shell, so shell built-ins (e.g. cmd's echo/dir) and operators (|, &&, ;) are not available."
+    },
+    {
+      "name": "command taken from args when body is empty",
+      "content": "",
+      "args": "nakedagent-no-such-program-zzz",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "nakedagent-no-such-program-zzz"
+      ],
+      "expect": "Error: 'nakedagent-no-such-program-zzz' is not an executable on PATH. Non-interactive mode runs programs directly without a shell, so shell built-ins (e.g. cmd's echo/dir) and operators (|, &&, ;) are not available."
+    },
+    {
+      "name": "runs an allowed command and reports exit code and stdout",
+      "content": "echo hi",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "echo"
+      ],
+      "expect": "(exit 0)\nhi\n",
+      "requires": "posix"
+    },
+    {
+      "name": "metacharacters are literal arguments, not operators",
+      "content": "echo a; echo b",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "echo"
+      ],
+      "expect": "(exit 0)\na; echo b\n",
+      "requires": "posix"
+    },
+    {
+      "name": "nonzero exit code is reported",
+      "content": "false",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "false"
+      ],
+      "expect": "(exit 1)",
+      "requires": "posix"
+    },
+    {
+      "name": "stderr is appended under a separator",
+      "content": "sh -c 'echo out; echo err 1>&2; exit 3'",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "sh -c"
+      ],
+      "expect": "(exit 3)\nout\n\n--- stderr ---\nerr\n",
+      "requires": "posix"
+    },
+    {
+      "name": "timeout is reported",
+      "content": "sleep 5",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "sleep"
+      ],
+      "shell_timeout": 1,
+      "expect": "Error: command timed out after 1s.",
+      "requires": "posix"
+    },
+    {
+      "name": "output is truncated at 8000 characters",
+      "content": "sh -c 'head -c 9000 /dev/zero | tr \"\\\\0\" a'",
+      "allow_shell": true,
+      "shell_allowlist": [
+        "sh -c"
+      ],
+      "expect": {
+        "concat": [
+          "(exit 0)\n",
+          {
+            "repeat": [
+              "a",
+              7991
+            ]
+          },
+          "\n...[truncated, 1009 more chars]"
+        ]
+      },
+      "requires": "posix"
+    }
+  ]
+}

@@ -1,0 +1,207 @@
+{
+  "suite": "shell_allowlist",
+  "requires": "posix",
+  "cases": [
+    {
+      "name": "exact command",
+      "command": "ls",
+      "allowlist": [
+        "ls"
+      ],
+      "expect": true
+    },
+    {
+      "name": "prefix match with extra args",
+      "command": "git status -s",
+      "allowlist": [
+        "git status"
+      ],
+      "expect": true
+    },
+    {
+      "name": "empty allowlist denies",
+      "command": "ls",
+      "allowlist": [],
+      "expect": false
+    },
+    {
+      "name": "blank pattern ignored",
+      "command": "ls",
+      "allowlist": [
+        "",
+        "  "
+      ],
+      "expect": false
+    },
+    {
+      "name": "non-matching pattern",
+      "command": "rm -rf x",
+      "allowlist": [
+        "git status"
+      ],
+      "expect": false
+    },
+    {
+      "name": "shorter command than pattern",
+      "command": "git",
+      "allowlist": [
+        "git status"
+      ],
+      "expect": false
+    },
+    {
+      "name": "semicolon glued to token does not match",
+      "command": "git status; rm -rf /",
+      "allowlist": [
+        "git status"
+      ],
+      "expect": false
+    },
+    {
+      "name": "semicolon as its own token still matches the prefix",
+      "command": "git status ; rm -rf /",
+      "allowlist": [
+        "git status"
+      ],
+      "expect": true
+    },
+    {
+      "name": "and-and glued",
+      "command": "git status&&rm x",
+      "allowlist": [
+        "git status"
+      ],
+      "expect": false
+    },
+    {
+      "name": "command substitution is literal",
+      "command": "echo $(id)",
+      "allowlist": [
+        "echo hi"
+      ],
+      "expect": false
+    },
+    {
+      "name": "any pattern may match",
+      "command": "ls -l",
+      "allowlist": [
+        "git status",
+        "ls"
+      ],
+      "expect": true
+    },
+    {
+      "name": "pattern is a token prefix not a string prefix",
+      "command": "lsof",
+      "allowlist": [
+        "ls"
+      ],
+      "expect": false
+    },
+    {
+      "name": "single quotes group a token",
+      "command": "echo 'a b'",
+      "allowlist": [
+        "echo 'a b'"
+      ],
+      "expect": true
+    },
+    {
+      "name": "unquoted pattern words do not match a quoted token",
+      "command": "echo 'a b'",
+      "allowlist": [
+        "echo a b"
+      ],
+      "expect": false
+    },
+    {
+      "name": "double quotes group a token",
+      "command": "echo \"a b\"",
+      "allowlist": [
+        "echo 'a b'"
+      ],
+      "expect": true
+    },
+    {
+      "name": "backslash escapes a space outside quotes",
+      "command": "echo a\\ b",
+      "allowlist": [
+        "echo 'a b'"
+      ],
+      "expect": true
+    },
+    {
+      "name": "backslash is literal inside single quotes",
+      "command": "echo 'a\\b'",
+      "allowlist": [
+        "echo a\\\\b"
+      ],
+      "expect": true
+    },
+    {
+      "name": "escaped quote inside double quotes",
+      "command": "echo \"a\\\"b\"",
+      "allowlist": [
+        "echo 'a\"b'"
+      ],
+      "expect": true
+    },
+    {
+      "name": "unbalanced quote in command denies",
+      "command": "echo \"abc",
+      "allowlist": [
+        "echo"
+      ],
+      "expect": false
+    },
+    {
+      "name": "unbalanced quote in pattern is skipped",
+      "command": "ls",
+      "allowlist": [
+        "echo \"abc",
+        "ls"
+      ],
+      "expect": true
+    },
+    {
+      "name": "unbalanced quote only pattern denies",
+      "command": "ls",
+      "allowlist": [
+        "echo \"abc"
+      ],
+      "expect": false
+    },
+    {
+      "name": "surrounding whitespace is ignored",
+      "command": "   ls   -l  ",
+      "allowlist": [
+        "ls"
+      ],
+      "expect": true
+    },
+    {
+      "name": "empty command denies",
+      "command": "   ",
+      "allowlist": [
+        "ls"
+      ],
+      "expect": false
+    },
+    {
+      "name": "hash is not a comment",
+      "command": "echo a # b",
+      "allowlist": [
+        "echo a #"
+      ],
+      "expect": true
+    },
+    {
+      "name": "tabs separate tokens",
+      "command": "ls\t-l",
+      "allowlist": [
+        "ls -l"
+      ],
+      "expect": true
+    }
+  ]
+}

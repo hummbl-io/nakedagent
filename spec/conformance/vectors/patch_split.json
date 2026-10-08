@@ -1,0 +1,118 @@
+{
+  "suite": "patch_split",
+  "cases": [
+    {
+      "name": "simple block",
+      "input": "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE",
+      "expect": {
+        "search": "old",
+        "replace": "new"
+      }
+    },
+    {
+      "name": "multi-line search and replace",
+      "input": "<<<<<<< SEARCH\na\nb\n=======\nc\nd\ne\n>>>>>>> REPLACE",
+      "expect": {
+        "search": "a\nb",
+        "replace": "c\nd\ne"
+      }
+    },
+    {
+      "name": "empty replace deletes",
+      "input": "<<<<<<< SEARCH\nold\n=======\n>>>>>>> REPLACE",
+      "expect": {
+        "search": "old",
+        "replace": ""
+      }
+    },
+    {
+      "name": "empty search",
+      "input": "<<<<<<< SEARCH\n=======\nnew\n>>>>>>> REPLACE",
+      "expect": {
+        "search": "",
+        "replace": "new"
+      }
+    },
+    {
+      "name": "marker lines are matched after strip",
+      "input": "  <<<<<<< SEARCH  \nold\n  =======\nnew\n>>>>>>> REPLACE  ",
+      "expect": {
+        "search": "old",
+        "replace": "new"
+      }
+    },
+    {
+      "name": "blank lines after the block are allowed",
+      "input": "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n\n  \n",
+      "expect": {
+        "search": "old",
+        "replace": "new"
+      }
+    },
+    {
+      "name": "leading prose before the block is ignored",
+      "input": "intro\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE",
+      "expect": {
+        "search": "old",
+        "replace": "new"
+      }
+    },
+    {
+      "name": "missing markers",
+      "input": "just text",
+      "expect": {
+        "error": "expected <<<<<<< SEARCH / ======= / >>>>>>> REPLACE markers, in that order"
+      }
+    },
+    {
+      "name": "markers out of order",
+      "input": "=======\n<<<<<<< SEARCH\nx\n>>>>>>> REPLACE",
+      "expect": {
+        "error": "expected <<<<<<< SEARCH / ======= / >>>>>>> REPLACE markers, in that order"
+      }
+    },
+    {
+      "name": "missing end marker",
+      "input": "<<<<<<< SEARCH\nold\n=======\nnew",
+      "expect": {
+        "error": "expected <<<<<<< SEARCH / ======= / >>>>>>> REPLACE markers, in that order"
+      }
+    },
+    {
+      "name": "second start marker before the end is rejected",
+      "input": "<<<<<<< SEARCH\na\n=======\n<<<<<<< SEARCH\nb\n>>>>>>> REPLACE",
+      "expect": {
+        "error": "a second <<<<<<< marker appears before the matching >>>>>>>"
+      }
+    },
+    {
+      "name": "content after the block is rejected",
+      "input": "<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\nextra",
+      "expect": {
+        "error": "unexpected content after >>>>>>> REPLACE; use one patch block per call"
+      }
+    },
+    {
+      "name": "a second full block after the first is rejected",
+      "input": "<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nc\n=======\nd\n>>>>>>> REPLACE",
+      "expect": {
+        "error": "unexpected content after >>>>>>> REPLACE; use one patch block per call"
+      }
+    },
+    {
+      "name": "separator inside replace body is kept",
+      "input": "<<<<<<< SEARCH\na\n=======\nb\n=======\nc\n>>>>>>> REPLACE",
+      "expect": {
+        "search": "a",
+        "replace": "b\n=======\nc"
+      }
+    },
+    {
+      "name": "close marker must match fully",
+      "input": "<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLAC",
+      "expect": {
+        "error": "expected <<<<<<< SEARCH / ======= / >>>>>>> REPLACE markers, in that order"
+      }
+    }
+  ]
+}

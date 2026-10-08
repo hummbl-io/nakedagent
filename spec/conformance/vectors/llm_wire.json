@@ -1,0 +1,909 @@
+{
+  "suite": "llm_wire",
+  "cases": [
+    {
+      "name": "ollama request shape and reply",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "message": {
+              "content": "hello there"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/chat",
+            "body": {
+              "model": "m1",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false,
+              "think": false
+            },
+            "authorization": null
+          }
+        ],
+        "reply": "hello there"
+      }
+    },
+    {
+      "name": "ollama never sends credentials even if the env var is set",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "env": {
+        "OPENAI_API_KEY": "sk-test-1"
+      },
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "message": {
+              "content": "hello there"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/chat",
+            "body": {
+              "model": "m1",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false,
+              "think": false
+            },
+            "authorization": null
+          }
+        ],
+        "reply": "hello there"
+      }
+    },
+    {
+      "name": "openai request shape, path and bearer key",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "env": {
+        "OPENAI_API_KEY": "sk-test-1"
+      },
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "hello there"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": "Bearer sk-test-1"
+          }
+        ],
+        "reply": "hello there"
+      }
+    },
+    {
+      "name": "openai trailing slash on host is normalised",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host_path": "/v1/",
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "hello there"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": null
+          }
+        ],
+        "reply": "hello there"
+      }
+    },
+    {
+      "name": "openai without a key sends no Authorization header",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "hello there"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": null
+          }
+        ],
+        "reply": "hello there"
+      }
+    },
+    {
+      "name": "openai custom key variable",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "api_key_env": "CUSTOM_KEY",
+      "env": {
+        "CUSTOM_KEY": "custom-secret"
+      },
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "hello there"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": "Bearer custom-secret"
+          }
+        ],
+        "reply": "hello there"
+      }
+    },
+    {
+      "name": "openai null content becomes empty string",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": null
+          }
+        ],
+        "reply": ""
+      }
+    },
+    {
+      "name": "ollama missing message field",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "nope": 1
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/chat",
+            "body": {
+              "model": "m1",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false,
+              "think": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "unexpected Ollama response shape"
+        ]
+      }
+    },
+    {
+      "name": "openai empty choices",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 200,
+          "body": {
+            "choices": []
+          }
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "unexpected OpenAI-compatible API response shape"
+        ]
+      }
+    },
+    {
+      "name": "http 500 with body",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "server": [
+        {
+          "status": 500,
+          "body": "boom"
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/chat",
+            "body": {
+              "model": "m1",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false,
+              "think": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "Ollama at http://HOST:PORT returned HTTP 500",
+          ": boom"
+        ]
+      }
+    },
+    {
+      "name": "http 401 on openai hints at the key variable",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 401,
+          "body": "nope"
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "returned HTTP 401",
+          "(check the key in $OPENAI_API_KEY)"
+        ]
+      }
+    },
+    {
+      "name": "http 403 on openai hints at the custom key variable",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "api_key_env": "CUSTOM_KEY",
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 403,
+          "body": "no"
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "body": {
+              "model": "gpt-x",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "returned HTTP 403",
+          "(check the key in $CUSTOM_KEY)"
+        ]
+      }
+    },
+    {
+      "name": "http 401 on ollama has no key hint",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "server": [
+        {
+          "status": 401,
+          "body": "no"
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/chat",
+            "body": {
+              "model": "m1",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false,
+              "think": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "returned HTTP 401"
+        ],
+        "error_absent": [
+          "check the key"
+        ]
+      }
+    },
+    {
+      "name": "200 with a non-json body",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "server": [
+        {
+          "status": 200,
+          "body": "<html>proxy error</html>"
+        }
+      ],
+      "expect": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/api/chat",
+            "body": {
+              "model": "m1",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "sys"
+                },
+                {
+                  "role": "user",
+                  "content": "hi"
+                }
+              ],
+              "stream": false,
+              "think": false
+            },
+            "authorization": null
+          }
+        ],
+        "error_contains": [
+          "returned a non-JSON response"
+        ]
+      }
+    },
+    {
+      "name": "connection refused (ollama)",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "unreachable": true,
+      "expect": {
+        "requests": [],
+        "error_contains": [
+          "could not reach Ollama at http://HOST:PORT",
+          "Is `ollama serve` running?"
+        ]
+      }
+    },
+    {
+      "name": "connection refused (openai)",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "unreachable": true,
+      "expect": {
+        "requests": [],
+        "error_contains": [
+          "could not reach OpenAI-compatible API at http://HOST:PORT"
+        ],
+        "error_absent": [
+          "ollama serve"
+        ]
+      }
+    },
+    {
+      "name": "host scheme must be http or https",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host": "file:///etc/passwd",
+      "expect": {
+        "requests": [],
+        "error_contains": [
+          "--host must be an http:// or https:// URL, got: 'file:///etc/passwd'"
+        ]
+      }
+    },
+    {
+      "name": "host must have a network location",
+      "api": "ollama",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host": "http://",
+      "expect": {
+        "requests": [],
+        "error_contains": [
+          "--host must be an http:// or https:// URL"
+        ]
+      }
+    },
+    {
+      "name": "unknown api is rejected",
+      "api": "bogus",
+      "model": "m1",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "host": "http://localhost:1",
+      "expect": {
+        "requests": [],
+        "error_contains": [
+          "--api must be one of ollama, openai, got: 'bogus'"
+        ]
+      }
+    },
+    {
+      "name": "credentials are not forwarded across a redirect",
+      "api": "openai",
+      "model": "gpt-x",
+      "messages": [
+        {
+          "role": "system",
+          "content": "sys"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ],
+      "env": {
+        "OPENAI_API_KEY": "sk-test-1"
+      },
+      "host_path": "/v1",
+      "server": [
+        {
+          "status": 302,
+          "headers": {
+            "Location": "/final"
+          },
+          "body": ""
+        },
+        {
+          "status": 200,
+          "body": {
+            "choices": [
+              {
+                "message": {
+                  "content": "hello there"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "lenient_requests": true,
+      "expect": {
+        "first_request": {
+          "method": "POST",
+          "path": "/v1/chat/completions",
+          "body": {
+            "model": "gpt-x",
+            "messages": [
+              {
+                "role": "system",
+                "content": "sys"
+              },
+              {
+                "role": "user",
+                "content": "hi"
+              }
+            ],
+            "stream": false
+          },
+          "authorization": "Bearer sk-test-1"
+        },
+        "later_requests_have_no_authorization": true
+      }
+    }
+  ]
+}
