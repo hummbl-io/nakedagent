@@ -2,9 +2,25 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23001340.svg)](https://doi.org/10.5281/zenodo.23001340)
 
-A coding agent with **zero runtime dependencies**. `pip install`-free by
-construction: `python -m nakedagent` runs on a stock Python 3.10+ interpreter,
-nothing else.
+A coding agent with **no third-party Python runtime dependencies**.
+The agent uses Python 3.10+ and its standard library. Live coding sessions
+also need a model service, such as Ollama.
+
+## Try it offline
+
+From a clone of this repository, run:
+
+```bash
+python -m examples.replay_demo
+```
+
+This synthetic demo writes a temporary event log, verifies it, changes one
+record, and shows that replay rejects the change. It needs no model, API key,
+network connection, or plugins, and removes its temporary files on exit.
+It demonstrates log consistency, not authentication or proof that external
+actions occurred. For a live coding session, see **Quick start** below.
+
+With a model service running, the interactive session looks like this:
 
 ```
 $ python -m nakedagent
@@ -16,18 +32,11 @@ Ctrl-D to exit.
 
 ## Why
 
-Every other agent in this space — gptme, aider, OpenHands, langchain-based
-tools — pulls in 20-40+ packages: HTTP clients, CLI-formatting libraries,
-provider SDKs, telemetry. That's not a criticism of them; those dependencies
-buy real capability (multi-provider abstraction, rich terminal rendering,
-robust malformed-output recovery). But it also means every install inherits
-whatever CVEs are sitting in that dependency tree, and updating any one
-package can break the agent.
-
-nakedagent takes the other side of that trade on purpose: `urllib` + `json` +
-`subprocess` + `re`, all from the standard library, are enough to drive a
-local model through a working tool-use loop. No supply chain, because there
-is no supply.
+nakedagent keeps the Python dependency surface small: `urllib` + `json` +
+`subprocess` + `re`, all from the standard library, drive the tool-use loop.
+You can read the implementation and replay recorded transitions without
+installing provider SDKs. Python, the model service, and any tools or plugins
+you enable still have their own security and maintenance requirements.
 
 ## What you get for that
 
