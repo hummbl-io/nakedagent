@@ -1,0 +1,48 @@
+name: Ruby port
+
+on:
+  push:
+    paths:
+      - "ports/ruby/**"
+      - "spec/**"
+      - ".github/workflows/ruby-port.yml"
+  pull_request:
+    paths:
+      - "ports/ruby/**"
+      - "spec/**"
+      - ".github/workflows/ruby-port.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        ruby-version: ["3.3", "3.4"]
+    defaults:
+      run:
+        working-directory: ports/ruby
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: false
+      - name: Zero dependencies
+        shell: bash
+        run: |
+          if grep -rEn "^[[:space:]]*(gem|require)[[:space:]]+[\"'](rails|rack|nokogiri|faraday|httparty|rest-client|thor|webrick|base64)[\"']" lib exe tools; then
+            echo "ERROR: a third-party or bundled-gem library is required."
+            exit 1
+          fi
+          test ! -e Gemfile || { echo "ERROR: Gemfile present"; exit 1; }
+          test ! -e Gemfile.lock || { echo "ERROR: Gemfile.lock present"; exit 1; }
+          echo "OK: no gem dependencies."
+      - name: Conformance vectors
+        run: ruby -W test/conformance_test.rb
