@@ -51,7 +51,7 @@ hands control back to the user.
 """
 
 
-def _system_prompt(tools: dict | None = None) -> str:
+def _system_prompt(tools: dict | None = None, preamble: str | None = None) -> str:
     """Build the system prompt from the tool registry.
 
     Each tool with a `.usage` attribute contributes its own fenced-block
@@ -61,8 +61,20 @@ def _system_prompt(tools: dict | None = None) -> str:
     `.usage` are listed by name only, so a plugin author who doesn't set
     `.usage` still gets discoverability without guessing syntax.
 
-    When no plugins are loaded this is byte-identical to the old static
-    SYSTEM_PROMPT -- the four foundation tools all carry `.usage`.
+    `preamble` is caller-supplied text placed ahead of the tool contract, so
+    a role definition -- a persona, a specialist brief -- loads without the
+    caller reconstructing the tool rules itself. It arrives through the seam
+    rather than as a static string, for the same reason the examples live on
+    the tools.
+
+    Order is deliberate: preamble, then the tool contract, then `_RULES`
+    last. A persona sets role and discipline while the mechanics of invoking
+    tools keep the final word, so a preamble cannot quietly redefine how a
+    tool is called.
+
+    When no plugins are loaded and no preamble is given this is
+    byte-identical to the old static SYSTEM_PROMPT -- the four foundation
+    tools all carry `.usage`.
     """
     registry = tools if tools is not None else TOOLS
     examples = []
@@ -74,6 +86,8 @@ def _system_prompt(tools: dict | None = None) -> str:
         else:
             no_usage.append(name)
     parts = [_HEADER, "\n\n".join(examples)]
+    if preamble and preamble.strip():
+        parts.insert(0, preamble.strip())
     if no_usage:
         parts.append(
             "Additional tools are available (invoked the same way, as a fenced "
@@ -201,6 +215,7 @@ def run(
     trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
     llm_options: dict | None = None,
+    system_preamble: str | None = None,
 ) -> None:
     """One-shot: run `prompt` to completion (no further human input)."""
     tools = _build_tools(
@@ -212,7 +227,7 @@ def run(
         trust_plugins=trust_plugins,
     )
     messages = [
-        {"role": "system", "content": _system_prompt(tools)},
+        {"role": "system", "content": _system_prompt(tools, system_preamble)},
         {"role": "user", "content": prompt},
     ]
     _run_until_done(messages, model, workspace, host, tools=tools, llm_options=llm_options)
@@ -229,6 +244,7 @@ def run_interactive(
     trust_workspace_plugins: bool = False,
     trust_plugins: bool = False,
     llm_options: dict | None = None,
+    system_preamble: str | None = None,
 ) -> None:
     """REPL: prompt the user for input whenever the agent has no tool calls left."""
     tools = _build_tools(
@@ -239,7 +255,7 @@ def run_interactive(
         trust_workspace_plugins=trust_workspace_plugins,
         trust_plugins=trust_plugins,
     )
-    messages = [{"role": "system", "content": _system_prompt(tools)}]
+    messages = [{"role": "system", "content": _system_prompt(tools, system_preamble)}]
     print(f"nakedagent -- workspace: {workspace} -- model: {model}")
     print("Ctrl-D to exit.\n")
     while True:
