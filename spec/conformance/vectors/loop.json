@@ -1,0 +1,489 @@
+{
+  "suite": "loop",
+  "cases": [
+    {
+      "name": "no tool call ends after one request",
+      "prompt": "hi",
+      "replies": [
+        "just text"
+      ],
+      "files": {},
+      "expect": {
+        "request_count": 1,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "files": {}
+      }
+    },
+    {
+      "name": "one tool round then a final answer",
+      "prompt": "read it",
+      "replies": [
+        "```read a.txt\n```",
+        "done"
+      ],
+      "files": {
+        "a.txt": "contents"
+      },
+      "expect": {
+        "request_count": 2,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "read it"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\ncontents"
+          }
+        ],
+        "files": {
+          "a.txt": "contents"
+        }
+      }
+    },
+    {
+      "name": "write then read back",
+      "prompt": "go",
+      "replies": [
+        "```write n.txt\nnew\n```",
+        "```read n.txt\n```",
+        "ok"
+      ],
+      "files": {},
+      "expect": {
+        "request_count": 3,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "go"
+          },
+          {
+            "role": "assistant",
+            "content": "```write n.txt\nnew\n```"
+          },
+          {
+            "role": "user",
+            "content": "[write output]\nWrote 3 chars to n.txt."
+          },
+          {
+            "role": "assistant",
+            "content": "```read n.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nnew"
+          }
+        ],
+        "files": {
+          "n.txt": "new"
+        }
+      }
+    },
+    {
+      "name": "unknown tool is reported to the model",
+      "prompt": "go",
+      "replies": [
+        "```frobnicate\nx\n```",
+        "ok"
+      ],
+      "files": {},
+      "expect": {
+        "request_count": 2,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "go"
+          },
+          {
+            "role": "assistant",
+            "content": "```frobnicate\nx\n```"
+          },
+          {
+            "role": "user",
+            "content": "[frobnicate output]\nError: unknown tool 'frobnicate'."
+          }
+        ],
+        "files": {}
+      }
+    },
+    {
+      "name": "tool name lookup is case-insensitive but output keeps the casing",
+      "prompt": "go",
+      "replies": [
+        "```READ a.txt\n```",
+        "ok"
+      ],
+      "files": {
+        "a.txt": "x"
+      },
+      "expect": {
+        "request_count": 2,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "go"
+          },
+          {
+            "role": "assistant",
+            "content": "```READ a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[READ output]\nx"
+          }
+        ],
+        "files": {
+          "a.txt": "x"
+        }
+      }
+    },
+    {
+      "name": "several calls in one reply all run before the next request",
+      "prompt": "go",
+      "replies": [
+        "```read a.txt\n```\n```read b.txt\n```",
+        "ok"
+      ],
+      "files": {
+        "a.txt": "A",
+        "b.txt": "B"
+      },
+      "expect": {
+        "request_count": 2,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "go"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```\n```read b.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nA"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nB"
+          }
+        ],
+        "files": {
+          "a.txt": "A",
+          "b.txt": "B"
+        }
+      }
+    },
+    {
+      "name": "shell is blocked without allow_shell",
+      "prompt": "go",
+      "replies": [
+        "```shell\nls\n```",
+        "ok"
+      ],
+      "files": {},
+      "expect": {
+        "request_count": 2,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "go"
+          },
+          {
+            "role": "assistant",
+            "content": "```shell\nls\n```"
+          },
+          {
+            "role": "user",
+            "content": "[shell output]\nError: shell execution blocked (non-interactive shell execution requires --allow-shell)."
+          }
+        ],
+        "files": {}
+      }
+    },
+    {
+      "name": "round cap hands control back after 25 rounds",
+      "prompt": "loop forever",
+      "replies": [
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```",
+        "```read a.txt\n```"
+      ],
+      "files": {
+        "a.txt": "x"
+      },
+      "expect": {
+        "request_count": 25,
+        "last_request_messages": [
+          {
+            "role": "system",
+            "content": "$SYSTEM"
+          },
+          {
+            "role": "user",
+            "content": "loop forever"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          },
+          {
+            "role": "assistant",
+            "content": "```read a.txt\n```"
+          },
+          {
+            "role": "user",
+            "content": "[read output]\nx"
+          }
+        ],
+        "files": {
+          "a.txt": "x"
+        }
+      }
+    }
+  ]
+}

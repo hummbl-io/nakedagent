@@ -1,0 +1,723 @@
+{
+  "suite": "fs_tools",
+  "cases": [
+    {
+      "name": "read existing file",
+      "tool": "read",
+      "args": "a.txt",
+      "files": {
+        "a.txt": "hello\nworld\n"
+      },
+      "expect": {
+        "result": "hello\nworld\n",
+        "files": {
+          "a.txt": "hello\nworld\n"
+        }
+      }
+    },
+    {
+      "name": "read file in subdirectory",
+      "tool": "read",
+      "args": "d/e.txt",
+      "files": {
+        "d/e.txt": "x"
+      },
+      "expect": {
+        "result": "x",
+        "files": {
+          "d/e.txt": "x"
+        }
+      }
+    },
+    {
+      "name": "read args are trimmed",
+      "tool": "read",
+      "args": "  a.txt  ",
+      "files": {
+        "a.txt": "x"
+      },
+      "expect": {
+        "result": "x",
+        "files": {
+          "a.txt": "x"
+        }
+      }
+    },
+    {
+      "name": "read empty path",
+      "tool": "read",
+      "args": "",
+      "files": {},
+      "expect": {
+        "result": "Error: read tool needs a path, e.g. ```read path/to/file.py```",
+        "files": {}
+      }
+    },
+    {
+      "name": "read missing file",
+      "tool": "read",
+      "args": "nope.txt",
+      "files": {},
+      "expect": {
+        "result": "Error: nope.txt does not exist.",
+        "files": {}
+      }
+    },
+    {
+      "name": "read directory lists sorted names",
+      "tool": "read",
+      "args": "d",
+      "files": {
+        "d/b.txt": "1",
+        "d/a.txt": "2",
+        "d/C.txt": "3",
+        "d/sub/x": "4"
+      },
+      "expect": {
+        "result": "d is a directory:\nC.txt\na.txt\nb.txt\nsub",
+        "files": {
+          "d/C.txt": "3",
+          "d/a.txt": "2",
+          "d/b.txt": "1",
+          "d/sub/x": "4"
+        }
+      }
+    },
+    {
+      "name": "read outside workspace via dotdot",
+      "tool": "read",
+      "args": "../outside.txt",
+      "files": {},
+      "expect": {
+        "result": "Error: ../outside.txt is outside the workspace.",
+        "files": {}
+      }
+    },
+    {
+      "name": "read absolute path outside workspace",
+      "tool": "read",
+      "args": "/etc/hostname",
+      "files": {},
+      "expect": {
+        "result": "Error: /etc/hostname is outside the workspace.",
+        "files": {}
+      }
+    },
+    {
+      "name": "read invalid utf-8 is replaced not rejected",
+      "tool": "read",
+      "args": "bin.dat",
+      "files": {
+        "bin.dat": {
+          "b64": "b2v/ZW5k"
+        }
+      },
+      "expect": {
+        "result": "ok�end",
+        "files": {
+          "bin.dat": {
+            "b64": "b2v/ZW5k"
+          }
+        }
+      }
+    },
+    {
+      "name": "read truncates at 8000 characters",
+      "tool": "read",
+      "args": "big.txt",
+      "files": {
+        "big.txt": {
+          "repeat": [
+            "a",
+            8001
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "concat": [
+            {
+              "repeat": [
+                "a",
+                8000
+              ]
+            },
+            "\n...[truncated, 1 more chars]"
+          ]
+        },
+        "files": {
+          "big.txt": {
+            "repeat": [
+              "a",
+              8001
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "read does not truncate at exactly 8000",
+      "tool": "read",
+      "args": "big.txt",
+      "files": {
+        "big.txt": {
+          "repeat": [
+            "a",
+            8000
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "repeat": [
+            "a",
+            8000
+          ]
+        },
+        "files": {
+          "big.txt": {
+            "repeat": [
+              "a",
+              8000
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "read truncation counts code points not bytes",
+      "tool": "read",
+      "args": "big.txt",
+      "files": {
+        "big.txt": {
+          "repeat": [
+            "😀",
+            8003
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "concat": [
+            {
+              "repeat": [
+                "😀",
+                8000
+              ]
+            },
+            "\n...[truncated, 3 more chars]"
+          ]
+        },
+        "files": {
+          "big.txt": {
+            "repeat": [
+              "😀",
+              8003
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "read truncation counts code points for 2-byte chars",
+      "tool": "read",
+      "args": "big.txt",
+      "files": {
+        "big.txt": {
+          "repeat": [
+            "é",
+            8010
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "concat": [
+            {
+              "repeat": [
+                "é",
+                8000
+              ]
+            },
+            "\n...[truncated, 10 more chars]"
+          ]
+        },
+        "files": {
+          "big.txt": {
+            "repeat": [
+              "é",
+              8010
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "write new file",
+      "tool": "write",
+      "args": "out.txt",
+      "content": "hello",
+      "files": {},
+      "expect": {
+        "result": "Wrote 5 chars to out.txt.",
+        "files": {
+          "out.txt": "hello"
+        }
+      }
+    },
+    {
+      "name": "write creates parent directories",
+      "tool": "write",
+      "args": "a/b/c.txt",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Wrote 1 chars to a/b/c.txt.",
+        "files": {
+          "a/b/c.txt": "x"
+        }
+      }
+    },
+    {
+      "name": "write overwrites existing file",
+      "tool": "write",
+      "args": "a.txt",
+      "content": "new",
+      "files": {
+        "a.txt": "old"
+      },
+      "expect": {
+        "result": "Wrote 3 chars to a.txt.",
+        "files": {
+          "a.txt": "new"
+        }
+      }
+    },
+    {
+      "name": "write empty path",
+      "tool": "write",
+      "args": "",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Error: write tool needs a path, e.g. ```write path/to/file.py```",
+        "files": {}
+      }
+    },
+    {
+      "name": "write outside workspace",
+      "tool": "write",
+      "args": "../x.txt",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Error: ../x.txt is outside the workspace.",
+        "files": {}
+      }
+    },
+    {
+      "name": "write into .git is protected",
+      "tool": "write",
+      "args": ".git/config",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Error: .git/config is in protected directory '.git'.",
+        "files": {}
+      }
+    },
+    {
+      "name": "write into .nakedagent is protected",
+      "tool": "write",
+      "args": ".nakedagent/plugins/p.py",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Error: .nakedagent/plugins/p.py is in protected directory '.nakedagent'.",
+        "files": {}
+      }
+    },
+    {
+      "name": "write count is in code points",
+      "tool": "write",
+      "args": "u.txt",
+      "content": "héllo 😀",
+      "files": {},
+      "expect": {
+        "result": "Wrote 7 chars to u.txt.",
+        "files": {
+          "u.txt": "héllo 😀"
+        }
+      }
+    },
+    {
+      "name": "write empty content",
+      "tool": "write",
+      "args": "e.txt",
+      "content": "",
+      "files": {},
+      "expect": {
+        "result": "Wrote 0 chars to e.txt.",
+        "files": {
+          "e.txt": ""
+        }
+      }
+    },
+    {
+      "name": "write path that merely contains .git is allowed",
+      "tool": "write",
+      "args": "a/.git/x",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Wrote 1 chars to a/.git/x.",
+        "files": {
+          "a/.git/x": "x"
+        }
+      }
+    },
+    {
+      "name": "write path starting with .github is allowed",
+      "tool": "write",
+      "args": ".github/ci.yml",
+      "content": "x",
+      "files": {},
+      "expect": {
+        "result": "Wrote 1 chars to .github/ci.yml.",
+        "files": {
+          ".github/ci.yml": "x"
+        }
+      }
+    },
+    {
+      "name": "read through a symlink that points outside the workspace",
+      "tool": "read",
+      "args": "link/secret.txt",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "secret.txt": "top secret"
+      },
+      "symlinks": {
+        "link": "../outside"
+      },
+      "expect": {
+        "result": "Error: link/secret.txt is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "secret.txt": "top secret"
+        }
+      }
+    },
+    {
+      "name": "read through a symlink that stays inside the workspace",
+      "tool": "read",
+      "args": "inlink/a.txt",
+      "requires": "symlink",
+      "files": {
+        "sub/a.txt": "inside"
+      },
+      "symlinks": {
+        "inlink": "sub"
+      },
+      "expect": {
+        "result": "inside",
+        "files": {
+          "sub/a.txt": "inside"
+        },
+        "outside_files": {}
+      }
+    },
+    {
+      "name": "dotdot after a symlink applies to the link target",
+      "tool": "read",
+      "args": "link2/../a.txt",
+      "requires": "posix",
+      "files": {
+        "sub/a.txt": "in sub",
+        "sub/deeper/b.txt": "b"
+      },
+      "symlinks": {
+        "link2": "sub/deeper"
+      },
+      "expect": {
+        "result": "in sub",
+        "files": {
+          "sub/a.txt": "in sub",
+          "sub/deeper/b.txt": "b"
+        },
+        "outside_files": {}
+      }
+    },
+    {
+      "name": "write through an outside symlink is refused and writes nothing",
+      "tool": "write",
+      "args": "link/new.txt",
+      "content": "x",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "keep.txt": "k"
+      },
+      "symlinks": {
+        "link": "../outside"
+      },
+      "expect": {
+        "result": "Error: link/new.txt is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "keep.txt": "k"
+        }
+      }
+    },
+    {
+      "name": "write to a dangling symlink whose target is outside is refused",
+      "tool": "write",
+      "args": "dl",
+      "content": "x",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "keep.txt": "k"
+      },
+      "symlinks": {
+        "dl": "../outside/newfile"
+      },
+      "expect": {
+        "result": "Error: dl is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "keep.txt": "k"
+        }
+      }
+    },
+    {
+      "name": "patch through an outside symlink is refused and leaves the file",
+      "tool": "patch",
+      "args": "link/f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "requires": "symlink",
+      "files": {},
+      "outside": {
+        "f.txt": "foo"
+      },
+      "symlinks": {
+        "link": "../outside"
+      },
+      "expect": {
+        "result": "Error: link/f.txt is outside the workspace.",
+        "files": {},
+        "outside_files": {
+          "f.txt": "foo"
+        }
+      }
+    },
+    {
+      "name": "protected directory is still protected when reached through a symlink",
+      "tool": "write",
+      "args": "g/config",
+      "content": "x",
+      "requires": "symlink",
+      "files": {
+        ".git/config": "c"
+      },
+      "symlinks": {
+        "g": ".git"
+      },
+      "expect": {
+        "result": "Error: g/config is in protected directory '.git'.",
+        "files": {
+          ".git/config": "c"
+        },
+        "outside_files": {}
+      }
+    },
+    {
+      "name": "patch replaces unique match",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "a\nfoo\nb\n"
+      },
+      "expect": {
+        "result": "Patched f.txt.",
+        "files": {
+          "f.txt": "a\nbar\nb\n"
+        }
+      }
+    },
+    {
+      "name": "patch multi-line search",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\nl1\nl2\n=======\nX\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "l0\nl1\nl2\nl3\n"
+      },
+      "expect": {
+        "result": "Patched f.txt.",
+        "files": {
+          "f.txt": "l0\nX\nl3\n"
+        }
+      }
+    },
+    {
+      "name": "patch can delete text",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "afoob"
+      },
+      "expect": {
+        "result": "Patched f.txt.",
+        "files": {
+          "f.txt": "ab"
+        }
+      }
+    },
+    {
+      "name": "patch search is exact including whitespace",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\nfoo \n=======\nbar\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "foo\n"
+      },
+      "expect": {
+        "result": "Error: SEARCH text not found in f.txt. It must match exactly, including whitespace.",
+        "files": {
+          "f.txt": "foo\n"
+        }
+      }
+    },
+    {
+      "name": "patch no match",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "zzz"
+      },
+      "expect": {
+        "result": "Error: SEARCH text not found in f.txt. It must match exactly, including whitespace.",
+        "files": {
+          "f.txt": "zzz"
+        }
+      }
+    },
+    {
+      "name": "patch ambiguous match",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "foo\nfoo\nfoo\n"
+      },
+      "expect": {
+        "result": "Error: SEARCH text matches 3 locations in f.txt; make it more specific.",
+        "files": {
+          "f.txt": "foo\nfoo\nfoo\n"
+        }
+      }
+    },
+    {
+      "name": "patch missing file",
+      "tool": "patch",
+      "args": "gone.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {},
+      "expect": {
+        "result": "Error: gone.txt does not exist. Use write to create it.",
+        "files": {}
+      }
+    },
+    {
+      "name": "patch empty path",
+      "tool": "patch",
+      "args": "",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {},
+      "expect": {
+        "result": "Error: patch tool needs a path, e.g. ```patch path/to/file.py```",
+        "files": {}
+      }
+    },
+    {
+      "name": "patch malformed block",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "no markers",
+      "files": {
+        "f.txt": "foo"
+      },
+      "expect": {
+        "result": "Error: malformed patch block (expected <<<<<<< SEARCH / ======= / >>>>>>> REPLACE markers, in that order).",
+        "files": {
+          "f.txt": "foo"
+        }
+      }
+    },
+    {
+      "name": "patch outside workspace",
+      "tool": "patch",
+      "args": "../f.txt",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {},
+      "expect": {
+        "result": "Error: ../f.txt is outside the workspace.",
+        "files": {}
+      }
+    },
+    {
+      "name": "patch protected directory",
+      "tool": "patch",
+      "args": ".git/HEAD",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {
+        ".git/HEAD": "foo"
+      },
+      "expect": {
+        "result": "Error: .git/HEAD is in protected directory '.git'.",
+        "files": {
+          ".git/HEAD": "foo"
+        }
+      }
+    },
+    {
+      "name": "patch refuses non-utf8 file and leaves it unchanged",
+      "tool": "patch",
+      "args": "b.bin",
+      "content": "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE",
+      "files": {
+        "b.bin": {
+          "b64": "Zm9v/w=="
+        }
+      },
+      "expect": {
+        "result": "Error: b.bin is not valid UTF-8; patch refused without changing the file.",
+        "files": {
+          "b.bin": {
+            "b64": "Zm9v/w=="
+          }
+        }
+      }
+    },
+    {
+      "name": "patch empty search matches many places",
+      "tool": "patch",
+      "args": "f.txt",
+      "content": "<<<<<<< SEARCH\n=======\nX\n>>>>>>> REPLACE",
+      "files": {
+        "f.txt": "abc"
+      },
+      "expect": {
+        "result": "Error: SEARCH text matches 4 locations in f.txt; make it more specific.",
+        "files": {
+          "f.txt": "abc"
+        }
+      }
+    }
+  ]
+}

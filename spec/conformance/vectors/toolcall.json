@@ -1,0 +1,277 @@
+{
+  "suite": "toolcall",
+  "cases": [
+    {
+      "name": "single shell call",
+      "input": "```shell\nls -la\n```",
+      "expect": [
+        {
+          "tool": "shell",
+          "args": "",
+          "content": "ls -la"
+        }
+      ]
+    },
+    {
+      "name": "write with path argument",
+      "input": "```write a/b.txt\nhello\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "a/b.txt",
+          "content": "hello"
+        }
+      ]
+    },
+    {
+      "name": "prose around a call",
+      "input": "I will list files.\n\n```shell\nls\n```\n\nDone.",
+      "expect": [
+        {
+          "tool": "shell",
+          "args": "",
+          "content": "ls"
+        }
+      ]
+    },
+    {
+      "name": "two calls in order",
+      "input": "```read a.txt\n```\ntext\n```shell\npwd\n```",
+      "expect": [
+        {
+          "tool": "read",
+          "args": "a.txt",
+          "content": ""
+        },
+        {
+          "tool": "shell",
+          "args": "",
+          "content": "pwd"
+        }
+      ]
+    },
+    {
+      "name": "no tool call in plain prose",
+      "input": "Nothing to run here.",
+      "expect": []
+    },
+    {
+      "name": "no tool call for untagged fence",
+      "input": "```\nls\n```",
+      "expect": []
+    },
+    {
+      "name": "non-tool language tag is still dispatched",
+      "input": "```python\nprint(1)\n```",
+      "expect": [
+        {
+          "tool": "python",
+          "args": "",
+          "content": "print(1)"
+        }
+      ]
+    },
+    {
+      "name": "uppercase tag keeps its casing",
+      "input": "```SHELL\nls\n```",
+      "expect": [
+        {
+          "tool": "SHELL",
+          "args": "",
+          "content": "ls"
+        }
+      ]
+    },
+    {
+      "name": "tag with digits and underscore",
+      "input": "```my_tool2 arg\nbody\n```",
+      "expect": [
+        {
+          "tool": "my_tool2",
+          "args": "arg",
+          "content": "body"
+        }
+      ]
+    },
+    {
+      "name": "args are trimmed",
+      "input": "```read    a.txt   \n```",
+      "expect": [
+        {
+          "tool": "read",
+          "args": "a.txt",
+          "content": ""
+        }
+      ]
+    },
+    {
+      "name": "empty body",
+      "input": "```shell\n```",
+      "expect": [
+        {
+          "tool": "shell",
+          "args": "",
+          "content": ""
+        }
+      ]
+    },
+    {
+      "name": "multi-line body is joined with LF",
+      "input": "```write f\nline1\nline2\n\nline4\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "line1\nline2\n\nline4"
+        }
+      ]
+    },
+    {
+      "name": "nested inner fence stays in body",
+      "input": "```write doc.md\nExample:\n```python\nprint('x')\n```\nEnd\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "doc.md",
+          "content": "Example:\n```python\nprint('x')\n```\nEnd"
+        }
+      ]
+    },
+    {
+      "name": "nested shell example is not a second call",
+      "input": "```write doc.md\n```shell\nrm -rf /\n```\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "doc.md",
+          "content": "```shell\nrm -rf /\n```"
+        }
+      ]
+    },
+    {
+      "name": "longer bare run inside body is not a close",
+      "input": "```write f\nbefore\n````\nafter\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "before\n````\nafter"
+        }
+      ]
+    },
+    {
+      "name": "close allows trailing whitespace",
+      "input": "```shell\nls\n```   \nafter",
+      "expect": [
+        {
+          "tool": "shell",
+          "args": "",
+          "content": "ls"
+        }
+      ]
+    },
+    {
+      "name": "indented fence is not an opener",
+      "input": "  ```shell\nls\n  ```",
+      "expect": []
+    },
+    {
+      "name": "indented backticks in body are not a close",
+      "input": "```write f\n  ```\nstill body\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "  ```\nstill body"
+        }
+      ]
+    },
+    {
+      "name": "opener args may not contain a backtick",
+      "input": "```write a`b\nbody\n```",
+      "expect": []
+    },
+    {
+      "name": "unclosed fence is refused",
+      "input": "```write f\nbody with no close",
+      "expect": [
+        {
+          "tool": "__refused__",
+          "args": "write",
+          "content": "unclosed fence for 'write'; call refused"
+        }
+      ]
+    },
+    {
+      "name": "unclosed fence swallows later calls into one refusal",
+      "input": "```write f\nbody\n```shell\nls\n",
+      "expect": [
+        {
+          "tool": "__refused__",
+          "args": "write",
+          "content": "unclosed fence for 'write'; call refused"
+        }
+      ]
+    },
+    {
+      "name": "a closed call survives and a later unclosed call is refused",
+      "input": "```read a\n```\n```write f\nx",
+      "expect": [
+        {
+          "tool": "read",
+          "args": "a",
+          "content": ""
+        },
+        {
+          "tool": "__refused__",
+          "args": "write",
+          "content": "unclosed fence for 'write'; call refused"
+        }
+      ]
+    },
+    {
+      "name": "CRLF input is normalised to LF",
+      "input": "```write f\r\nline1\r\nline2\r\n```\r\n",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "line1\nline2"
+        }
+      ]
+    },
+    {
+      "name": "U+2028 is not a line break",
+      "input": "```write f\na ```shell\nb\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "a ```shell\nb"
+        }
+      ]
+    },
+    {
+      "name": "form feed is not a line break",
+      "input": "```write f\na\f```\nb\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "a\f```\nb"
+        }
+      ]
+    },
+    {
+      "name": "unicode body preserved",
+      "input": "```write f\nhéllo 😀\n```",
+      "expect": [
+        {
+          "tool": "write",
+          "args": "f",
+          "content": "héllo 😀"
+        }
+      ]
+    }
+  ]
+}
