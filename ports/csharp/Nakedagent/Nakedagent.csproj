@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Nakedagent</RootNamespace>
+    <AssemblyName>Nakedagent</AssemblyName>
+    <Description>nakedagent for .NET: a terminal coding agent with zero package dependencies (spec v0.1 foundation).</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

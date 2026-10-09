@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>nakedagent-dotnet</AssemblyName>
+    <RootNamespace>Nakedagent.Cli</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nakedagent\Nakedagent.csproj" />
+  </ItemGroup>
+</Project>
