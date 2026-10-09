@@ -1,0 +1,81 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require_relative "../lib/nakedagent"
+
+def fail_with(message, code = 1)
+  warn "error: #{message}"
+  code
+end
+
+def main(argv)
+  opts = {
+    model: "qwen2.5-coder:7b", workspace: nil, host: nil, api: "ollama",
+    api_key_env: Nakedagent::DEFAULT_API_KEY_ENV, allow_shell: false, allowlist: [],
+    timeout: Nakedagent::DEFAULT_SHELL_TIMEOUT.to_s
+  }
+  parser = OptionParser.new do |o|
+    o.banner = "usage: nakedagent [options] [PROMPT]"
+    o.on("-m", "--model MODEL", "model name or Ollama tag") { |v| opts[:model] = v }
+    o.on("-w", "--workspace DIR", "workspace directory (default: current directory)") { |v| opts[:workspace] = v }
+    o.on("--host URL", "model server URL (required for --api openai, including the version path)") { |v| opts[:host] = v }
+    o.on("--api API", "wire format: ollama (default) or openai") { |v| opts[:api] = v }
+    o.on("--api-key-env VAR", "environment variable holding the API key for --api openai") { |v| opts[:api_key_env] = v }
+    o.on("--allow-shell", "allow shell tool execution (non-interactive, allowlisted commands only)") { opts[:allow_shell] = true }
+    o.on("--shell-allowlist PATTERN", "allowed shell command prefix (repeatable)") { |v| opts[:allowlist] << v }
+    o.on("--shell-timeout SECONDS", "timeout in seconds for shell tool execution") { |v| opts[:timeout] = v }
+    o.on("--version", "print the version and exit") do
+      puts Nakedagent::VERSION
+      return 0
+    end
+  end
+  begin
+    rest = parser.parse(argv)
+  rescue OptionParser::ParseError => e
+    return fail_with(e.message, 2)
+  end
+  return fail_with("only one prompt argument is allowed", 2) if rest.length > 1
+  unless %w[ollama openai].include?(opts[:api])
+    return fail_with("--api must be one of ollama, openai, got: '#{opts[:api]}'", 2)
+  end
+
+  timeout = Integer(opts[:timeout], exception: false)
+  return fail_with("--shell-timeout must be greater than 0") unless timeout&.positive?
+
+  host = opts[:host]
+  if host.nil? || host.empty?
+    return fail_with("--api openai needs --host (e.g. https://api.openai.com/v1)") unless opts[:api] == "ollama"
+
+    host = Nakedagent::DEFAULT_HOST
+  end
+  options = Nakedagent::Options.new(
+    model: opts[:model], host: host, workspace: File.expand_path(opts[:workspace] || Dir.pwd),
+    llm: { api: opts[:api], api_key_env: opts[:api_key_env] },
+    shell: Nakedagent::ShellPolicy.new(opts[:allow_shell], opts[:allowlist].map(&:strip).reject(&:empty?), timeout)
+  )
+
+  if rest.length == 1
+    Nakedagent::Agent.run(rest[0], options)
+    return 0
+  end
+  messages = Nakedagent::Agent.new_conversation(options)
+  puts "nakedagent -- workspace: #{options.workspace} -- model: #{options.model}\nCtrl-D to exit.\n\n"
+  loop do
+    print "> "
+    line = $stdin.gets
+    break if line.nil?
+    next if line.strip.empty?
+
+    messages << { "role" => "user", "content" => line.strip }
+    Nakedagent::Agent.run_until_done(messages, options)
+  end
+  puts
+  0
+rescue Nakedagent::LLMError => e
+  fail_with(e.message)
+rescue Interrupt
+  130
+end
+
+exit(main(ARGV))
