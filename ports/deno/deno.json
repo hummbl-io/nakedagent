@@ -1,0 +1,15 @@
+{
+  "version": "0.1.0-dev",
+  "exports": "./mod.ts",
+  "tasks": {
+    "test": "deno test --allow-read --allow-write --allow-run --allow-net --allow-env",
+    "check": "deno check mod.ts main.ts && deno fmt --check && deno lint"
+  },
+  "compilerOptions": {
+    "strict": true
+  },
+  "fmt": {
+    "lineWidth": 120
+  },
+  "imports": {}
+}
