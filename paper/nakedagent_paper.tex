@@ -1,287 +1,201 @@
 \documentclass[10pt,twocolumn,letterpaper]{article}
-
 \usepackage[margin=0.75in]{geometry}
-\usepackage{times}
-\usepackage{amsmath,amssymb,amsfonts}
-\usepackage{algorithmic}
-\usepackage{graphicx}
-\usepackage{textcomp}
-\usepackage{xcolor}
-\usepackage{booktabs}
-\usepackage{listings}
-\usepackage{url}
-\usepackage{hyperref}
+\usepackage{times,amsmath,amssymb,graphicx,booktabs,listings,xcolor}
+\usepackage{xurl}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
 \usepackage{microtype}
-
-\hypersetup{
-    colorlinks=true,
-    linkcolor=blue,
-    citecolor=blue,
-    urlcolor=blue,
-}
-
-\lstset{
-    basicstyle=\ttfamily\footnotesize,
-    breaklines=true,
-    frame=single,
-    numbers=none,
-    keywordstyle=\color{blue}\bfseries,
-    commentstyle=\color{gray}\itshape,
-    stringstyle=\color{teal},
-    showstringspaces=false
-}
-
-\title{NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay}
-
-\author{
-  \textbf{Reuben Bowlby} \\
-  HUMMBL, LLC \\
-  \texttt{reuben@hummbl.io} \\
-  ORCID: \href{https://orcid.org/0009-0002-5620-1103}{0009-0002-5620-1103}
-}
-
-\date{September 2026}
-
+\setlength{\emergencystretch}{2em}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,frame=single,showstringspaces=false}
+\title{NakedAgent: Standard-Library Coding Agents with Explicit Effect Boundaries and Offline Replay}
+\author{\textbf{Reuben Bowlby}\\HUMMBL, LLC\\\texttt{reuben@hummbl.io}\\
+ORCID: \href{https://orcid.org/0009-0002-5620-1103}{0009-0002-5620-1103}}
+\date{Living revision, October 10, 2026 --- unreleased}
 \begin{document}
-
 \maketitle
-
 \begin{abstract}
-Autonomous software engineering agents driven by Large Language Models (LLMs) increasingly rely on expansive, multi-tiered dependency trees. Mainstream agent scaffolds (e.g., SWE-agent, Aider, OpenHands) import between 20 and 50+ third-party packages to facilitate HTTP communication, terminal UI rendering, provider protocol abstraction, and telemetry. While feature-rich, this architectural paradigm introduces substantial supply-chain vulnerability attack surfaces, runtime version fragility, and heavy deployment footprints. In this paper, we introduce NakedAgent, an autonomous coding agent engineered under a strict zero-runtime-dependency constraint: it executes entirely upon standard Python 3.10+ library modules (urllib, json, subprocess, re, and hashlib). NakedAgent decouples tool invocation from proprietary JSON function-calling schemas by utilizing a Markdown fenced code-block protocol, enabling consistent tool use across local models (such as Qwen 2.5-Coder and Gemma 3) and hosted endpoints. To establish auditability and tamper-evident transcript integrity, we model agent execution as a pure Mealy state machine reducer $(S_t, E_t) \to (S_{t+1}, A_{t+1})$, combined with SHA-256 Merkle-linked state hashing recorded in an append-only JSON Lines (JSONL) event log. This architecture enables zero-inference offline replay verification, validating tool execution histories without querying an LLM. We present empirical findings from a SWE-bench Lite pilot with local 12B models, delineating scaffold-induced failure modes from model-inherent reasoning bounds. Finally, we formulate the Omakase extensibility doctrine, demonstrating how clean tool substitution seams empower extensible agent behaviors without framework bloat.
+NakedAgent explores how much of a terminal coding agent can be implemented using Python's standard library. Its Python package declares no third-party runtime dependencies and provides four foundation tools, a fenced-text invocation grammar, two HTTP wire adapters, and a tool-substitution interface that also updates prompt examples. An optional functional execution path separates deterministic state transitions from model and tool effects. Its versioned JSONL verifier replays reported events without model inference or tool execution and detects inconsistencies against recorded hashes and final-state fields. This is a transcript-consistency mechanism: it neither authenticates a rewritten transcript nor proves that reported effects occurred. We specify the actual hash inputs, distinguish three execution paths and their budgets, and provide offline counterexamples that delimit these guarantees. A previously recorded three-instance SWE-bench Lite pilot supplies a failure-analysis case study, including invalid harness runs and a reported corrected run with zero resolved tasks. Its absent raw trajectories and uncontrolled sampling prevent comparative performance conclusions. The contribution is an inspectable architecture and a reproducibility contract, not a proof of secure or capable autonomous execution.
 \end{abstract}
 
-\section{Introduction}
-Large Language Models have catalyzed a paradigm shift in software engineering automation~\cite{jimenez2024swebench,yang2024sweagent}. Modern coding agents read repositories, analyze stack traces, formulate patch hypotheses, and execute shell commands iteratively within feedback loops~\cite{yao2022react,shinn2023reflexion}. 
+\section{Scope and contribution}
+Coding agents combine model outputs with repository inspection, editing and command execution. SWE-agent studies how the agent--computer interface affects performance~\cite{yang2024sweagent}; SWE-bench provides issue-resolution tasks and test-based evaluation~\cite{jimenez2024swebench}. NakedAgent asks a narrower architectural question: can the interaction loop, tool dispatch, provider transport and optional replay layer be built without third-party \emph{Python runtime packages}?
 
-However, existing state-of-the-art coding agent frameworks—including Aider~\cite{gauthier2023aider}, SWE-agent~\cite{yang2024sweagent}, gptme~\cite{gptme2023}, and OpenHands~\cite{openhands2024}—are characterized by substantial dependency bloat. Typical installations pull in dozens of transitive packages spanning asynchronous networking libraries (\texttt{httpx}, \texttt{aiohttp}), rich terminal user interface kits (\texttt{rich}, \texttt{prompt\_toolkit}), distributed telemetry, and vendor-specific SDKs. 
+The answer at the inspected source revision is constructive: these components exist using the standard library~\cite{nakedagentsource}. That fact does not establish competitive task success, lower defect rates, or lower total supply-chain risk. Python, the operating system, model server, model weights, command-line programs and optional plugins remain dependencies of a deployment. The package also uses a setuptools build backend; build-time requirements are outside the runtime count.
 
-This dependency proliferation incurs three critical systemic liabilities:
-\begin{enumerate}
-    \item \textbf{Supply-Chain Attack Surfaces}: Every additional package imported into an agent runtime introduces latent Common Vulnerabilities and Exposures (CVEs) and vectors for malicious compromise~\cite{ohm2020supplychain,ladisa2023supplychain}. Because coding agents inherently possess arbitrary shell execution and filesystem modification privileges within their execution sandbox, compromising an agent's dependency tree yields immediate remote code execution.
-    \item \textbf{Version Fragility and Upstream Churn}: Minor version updates across transitive dependencies frequently break agent loops or corrupt internal prompt structures, undermining long-term production stability.
-    \item \textbf{Container and Footprint Overhead}: Deploying agents into resource-constrained edge systems, embedded devices, or air-gapped secure enclaves becomes prohibitive when megabytes of external dependencies must be containerized and verified.
-\end{enumerate}
+This revision contributes (1) a source-bound description of the architecture and its substitution seam; (2) a conditional replay argument with an explicit threat model and executable counterexamples; and (3) a separation of historical pilot observations from a prospective evaluation protocol. It does not claim invention of fenced tool calls, search/replace editing, functional reducers or hash chains.
 
-To confront this trade-off, we propose \textbf{NakedAgent}. NakedAgent poses a fundamental research question: \textit{Can an autonomous coding agent achieve robust, auditable, and extensible code modification loops while maintaining exactly zero runtime dependencies?}
+\paragraph{Version boundary.}
+All present-tense implementation statements refer to the Python reference at commit
+\url{0c96f1a8adac035b9d204ebc78c5eb4175c13685}.
+The package metadata says version 0.1.0, while the current event-log schema is v0.4; these are distinct version namespaces. The September paper PDF, HTML, compiled bibliography and arXiv bundle remain historical artifacts. This unreleased TeX revision supersedes their claims for review, without asserting a new DOI or deposit. The repository-recorded historical DOI is \url{https://doi.org/10.5281/zenodo.23001340}; its remote contents were not independently verified in this revision.
 
-By restricting the runtime strictly to the standard Python library (\texttt{stdlib}), NakedAgent eliminates supply-chain exposure by construction. In this paper, we describe the architectural foundations of NakedAgent, its formal Mealy state machine execution lane, its tamper-evident Merkle event logging and offline replay mechanism, its empirical performance on SWE-bench Lite, and the Omakase extensibility doctrine.
+\section{Architecture and effect boundaries}
+\subsection{Dependency scope}
+Let $D_P$ be the third-party Python packages required by the foundation runtime, excluding plugins and external services. The pinned \texttt{pyproject.toml} declares $D_P=\varnothing$. The companion script statically enumerates absolute imports in \texttt{nakedagent/*.py} and checks them against the executing interpreter's standard-library module inventory. This supports the package-level claim, not a complete software bill of materials or a guarantee about dynamically imported plugins.
 
-\section{System Architecture}
+The provider adapter in \texttt{llm.py} uses \texttt{urllib.request} for Ollama's \texttt{/api/chat} and an OpenAI-compatible chat endpoint. API keys are obtained from a named environment variable. The Ollama default is \texttt{http://localhost:11434}; HTTP over loopback is still network communication, and the configurable host can point elsewhere. Compatibility with every server advertising a similar API is not established. The source supports incremental response parsing through the \texttt{stream} argument, so absence of a rich terminal framework is not absence of streaming transport.
 
-\subsection{Foundational Invariants}
-NakedAgent is governed by three primary architectural invariants:
-\begin{equation}
-    |\mathcal{D}_{\text{runtime}}| = 0
-\end{equation}
-where $\mathcal{D}_{\text{runtime}}$ represents the set of external third-party packages required to execute the agent.
+\subsection{Four foundation tools}
+The registry exposes functions with the interface
+\[
+ t:(\text{args},\text{content},\text{workspace})\longrightarrow\text{result string}.
+\]
+This signature standardizes dispatch; it does not make filesystem or subprocess effects pure or deterministic.
 
-\begin{equation}
-    \forall t \in \mathcal{T}_{\text{foundation}}, \quad t: (\mathcal{A}_{\text{args}}, \mathcal{W}_{\text{context}}) \to \mathcal{R}_{\text{result}}
-\end{equation}
-where $\mathcal{T}_{\text{foundation}}$ is a minimal set of four deterministic tools operating within workspace $\mathcal{W}_{\text{context}}$.
-
-\subsection{The Four Foundation Tools}
-Rather than supplying extensive specialized APIs, NakedAgent constrains its foundation to four primitive tools:
 \begin{itemize}
-    \item \textbf{\texttt{read} [path]}: Inspects file contents within the workspace boundary. To assist model attention across long documents, line numbering is formatted cleanly, and path escapes traversing outside the target workspace are rejected.
-    \item \textbf{\texttt{write} [path]}: Atomically writes or overwrites content to disk. Directory paths are created on demand, preventing path traversal vulnerabilities.
-    \item \textbf{\texttt{patch} [path]}: Applies search-and-replace hunks. Rather than relying on non-deterministic diff algorithms, the patch tool requires exact, unique substring matches:
-    \begin{equation}
-        \text{count}(S_{\text{search}}, F_{\text{content}}) = 1
-    \end{equation}
-    If the search target occurs zero times (missing) or more than once (ambiguous), the patch fails closed with an explicit diagnostic message, preventing silent code corruption.
-    \item \textbf{\texttt{shell} [cmd]}: Executes system commands via \texttt{subprocess.run}. In interactive mode, shell invocations require human confirmation. In automated or headless runs, shell access is guarded by an explicit \texttt{--allow-shell} flag and a tokenized, prefix-based allowlist (\texttt{--shell-allowlist}).
+\item \texttt{read} resolves a path relative to the workspace, rejects a resolved escape, and returns text or a directory listing. It does \emph{not} add line numbers, because a model might copy them into an exact-match patch.
+\item \texttt{write} creates parent directories and calls \texttt{Path.write\_text}. The source does not implement a temporary-file-and-rename atomic-write protocol.
+\item \texttt{patch} accepts a SEARCH/REPLACE block and requires exactly one occurrence of the search text in the current decoded file. It refuses missing or ambiguous matches and invalid UTF-8. Unique matching localizes the chosen replacement; it does not prove that the edit is correct, preserve all byte-level encodings, or eliminate concurrent-write races.
+\item \texttt{shell} prompts for a complete command in interactive mode. Noninteractive execution requires both an allow switch and a matching tokenized command prefix; it executes an argument vector with \texttt{shell=False}. Interactive approval selects a different path using \texttt{shell=True}.
 \end{itemize}
 
-\subsection{Schema-Free Tool Calling via Code Fences}
-Most commercial agent frameworks rely on proprietary JSON function-calling formats (e.g., OpenAI Tool Calls, Anthropic Tool Use). However, open-weights and smaller localized models (e.g., 7B--14B parameter models running on consumer GPUs via Ollama) frequently struggle with strict JSON schema serialization, resulting in decoding failures and aborted trajectories.
+The file tools check workspace containment and protect top-level \texttt{.git} and \texttt{.nakedagent} targets. These are application checks, not an operating-system sandbox. Shell commands and arbitrary plugin code have separate authority, and filesystem races or host-specific aliases require separate evaluation.
 
-NakedAgent resolves this via \textit{Markdown Code-Fence Tool Parsing}. The system prompt instructs the language model to invoke tools by emitting standard triple-backtick fenced blocks where the language identifier denotes the tool:
-\begin{lstlisting}[language=bash]
+\subsection{Fenced-text invocation}
+A response is parsed into an \emph{ordered list} of tool calls. The grammar uses a column-zero triple-backtick opener, a tool name, optional arguments and a body. The parser is a line scanner with a stack of fence lengths, not a single regular-expression extraction. It normalizes CRLF, tracks nested fences and emits a reserved refusal call for an unclosed block. See \texttt{toolcall.py} and the foundation specification for exact rules.
+
+\begin{lstlisting}
 ```patch src/calculator.py
 <<<<<<< SEARCH
-def add(a, b):
-    return a - b
+return a - b
 =======
-def add(a, b):
-    return a + b
+return a + b
 >>>>>>> REPLACE
 ```
 \end{lstlisting}
 
-A deterministic regular expression scanner extracts tool blocks from the generated token stream:
-\begin{equation}
-    \mathcal{P}_{\text{tool}}: \text{Response} \to \{(\text{name}_i, \text{target}_i, \text{payload}_i)\}_{i=1}^k
-\end{equation}
-Because every modern instruction-tuned model is pre-trained extensively on Markdown code blocks, tool-calling success rates remain high even on small 7B parameter models without fine-tuned JSON function calling capabilities.
+This avoids requiring a provider's native function-calling wire format; it still imposes a tool-call grammar on model text. Tagged examples at column zero can be interpreted as requests. No measured advantage over native tool calling, or general success rate for small models, follows from the grammar alone. The implementation acknowledges inspiration from gptme~\cite{gptme} and uses a search/replace convention comparable to Aider's documented edit formats~\cite{aiderformats}.
 
-\subsection{Transport Abstraction}
-Network transport is implemented via standard \texttt{urllib.request}. NakedAgent natively supports two wire protocols:
-\begin{enumerate}
-    \item \textbf{Ollama Local API}: Default local inference via \texttt{/api/chat}, operating with zero network exposure.
-    \item \textbf{OpenAI-Compatible Wire API}: Supporting vLLM, LM Studio, and remote API gateways using standard Bearer token authentication loaded from environment variables (\texttt{OPENAI\_API\_KEY}).
-\end{enumerate}
-
-\section{Provable Execution and Replay Verification}
-
-\subsection{The Mealy Machine State Reducer}
-To provide mathematical rigor and eliminate unverified hidden state, NakedAgent models automated runs as a finite state Mealy machine:
-\begin{equation}
-    \delta: (S_t, E_t) \to (S_{t+1}, [A_{t+1}])
-\end{equation}
-where $S_t$ is the immutable agent state at turn $t$, $E_t$ is an incoming event, and $A_{t+1}$ represents outward actions dispatched to the environment (such as model requests or tool executions).
-
-The agent state $S_t$ is a frozen dataclass encapsulating:
-\begin{equation}
-    S = \langle \text{status}, \text{messages}, \text{budget}, \text{pending\_actions}, \text{meta} \rangle
-\end{equation}
-Transitions are purely functional and side-effect free: all I/O is isolated in a thin driver layer (\texttt{driver.py}).
-
-\subsection{Merkle State Hashing and Event Logging}
-Every transition is logged sequentially into an append-only JSONL stream. Each record is cryptographically linked to the preceding state through SHA-256 Merkle chaining:
-\begin{equation}
-    H_0 = \text{SHA-256}(\text{GenesisHeader})
-\end{equation}
-\begin{equation}
-    H_t = \text{SHA-256}(H_{t-1} \parallel \text{CanonicalJSON}(E_t) \parallel \text{Digest}(S_t))
-\end{equation}
-
-This cryptographic formulation guarantees:
-\begin{itemize}
-    \item \textbf{Tamper Evidence}: Any post-hoc mutation of tool outputs, prompt injections, or agent actions invalidates all downstream hashes in the chain.
-    \item \textbf{Strict Causality}: Events cannot be reordered or inserted retroactively.
-\end{itemize}
-
-\subsection{Zero-Inference Offline Replay}
-Auditing AI agent trajectories historically required either re-executing expensive LLM calls (which introduces non-determinism) or trusting unverified raw text transcripts.
-
-Under NakedAgent, any recorded event log $\mathcal{L} = [e_1, e_2, \dots, e_N]$ can be verified offline via:
-\begin{lstlisting}[language=bash]
-$ python -m nakedagent.replay run.jsonl
-PASS run.jsonl: verified 5 events; final hash 6d1e09...
-\end{lstlisting}
-The replay verifier re-executes the pure reducer $\delta(S_t, E_t)$ against the recorded tool results without initiating any network calls or model inferences. If the reconstructed Merkle state hash matches the terminal hash in the log, the execution is mathematically certified to have followed the reducer's operational semantics.
-
-\textit{Epistemic Scope}: Importantly, this cryptographic replay certifies \textbf{internal transcript causality and reducer determinism}---specifically, that the internal state transitions $\delta(S_t, E_t) \to S_{t+1}$ followed verified rules without offline transcript tampering. It does \textit{not} certify external semantic correctness, external environment isolation, or model resistance to prompt injection, which must remain defended by OS-level sandboxing.
-
-\section{The Omakase Extensibility Doctrine}
-
-\subsection{Defaults over Decisions}
-Inspired by the Japanese concept of \textit{Omakase} (``chef's choice''), NakedAgent provides highly tuned, opinionated defaults: out-of-the-box, a developer requires no configuration flags or parameter tuning.
-
-\subsection{The Plugin Seam}
-Extensibility is achieved not through heavyweight frameworks or abstract base classes, but via a filesystem convention seam:
-\begin{itemize}
-    \item Plugins are plain Python files placed in \texttt{.nakedagent/plugins/} (repo-local) or \texttt{\~{}/.nakedagent/plugins/} (user-global).
-    \item A plugin exposes an optional \texttt{TOOLS: dict[str, ToolFunc]} and an optional \texttt{DISABLE: list[str]}.
-\end{itemize}
-
-\subsection{Dynamic Prompt Adaptation}
-In classical agent architectures, modifying a tool requires manually modifying the system prompt text to reflect the new syntax. In NakedAgent, every tool function attaches an intrinsic \texttt{.usage} metadata attribute. 
-
-When plugins are discovered at startup, the system prompt generator dynamically renders the tool documentation block:
-\begin{equation}
-    \text{Prompt}_{\text{system}} = \mathcal{B}_{\text{core}} \cup \bigcup_{t \in \mathcal{T}_{\text{active}}} t\text{.usage}
-\end{equation}
-If a plugin overrides \texttt{patch} with a unified-diff implementation, its replacement \texttt{.usage} example automatically replaces the foundation documentation in the prompt without touching foundation code.
-
-Furthermore, setting \texttt{DISABLE = ['shell', 'write']} prunes both the dispatch registry and the prompt examples, instantly yielding a provably read-only agent.
-
-\section{Sidekick Harness and Safety Tripwires}
-For governed environments, NakedAgent incorporates the \textit{Sidekick Harness} and \textit{JevNoulGate} tripwires:
-\begin{itemize}
-    \item \textbf{Bounded Slot Budgets}: Every autonomous run is assigned a strict maximum turn budget $B_{\text{max}}$. Upon exhaustion, execution transitions immediately to a suspended state without unbounded recursion.
-    \item \textbf{Tri-State Escalation}: Sensitive operations (such as high-impact shell commands) pass through a tripwire evaluator yielding $\text{ALLOW}$, $\text{DENY}$, or $\text{ESCALATE}$. In an escalate condition, the event log is sealed in a suspended state awaiting human sign-off.
-    \item \textbf{Zero-Dependency MCP Client}: NakedAgent includes a standard-library JSON-RPC 2.0 client supporting the Model Context Protocol (MCP) over \texttt{stdio}, enabling tool sharing across modern agent meshes without external SDKs.
-\end{itemize}
-
-\section{Exploratory Pilot: Failure Modes of Local Models under Minimal Scaffolding}
-
-\subsection{Experimental Setup}
-To explore the failure dynamics, harness friction, and baseline capabilities of minimal agent architectures under local inference, we conducted an exploratory pilot on SWE-bench Lite~\cite{jimenez2024swebench}.
-\begin{itemize}
-    \item \textbf{Hardware}: NVIDIA GeForce RTX 3080 Ti (12 GB VRAM), Docker Desktop (WSL2), AMD Ryzen CPU.
-    \item \textbf{Model}: Google \texttt{gemma3:12b} served locally via Ollama with 4-bit quantization. Note that while mini-swe-agent was configured with temperature $T=0$, NakedAgent was evaluated under Ollama's default sampling temperature ($\approx 0.8$), which we note as an uncontrolled exploratory variable.
-    \item \textbf{Instances}: SWE-bench Lite instances \texttt{astropy\_\_astropy-12907}, \texttt{-14182}, and \texttt{-14365}.
-    \item \textbf{Baselines}: Mini-SWE-agent 2.4.6 (native tools mode vs. text-based backtick mode).
-\end{itemize}
-
-\subsection{Results and Observations}
-Table~\ref{tab:swebench} summarizes the comparative trajectories across configurations. Crucially, across all tested configurations, the true ground-truth resolution rate was \textbf{0/3 resolved (0\%)}.
-
+\section{Execution paths and budgets}
 \begin{table*}[t]
-\centering
-\caption{SWE-bench Lite Exploratory Pilot Trajectory Results with Local Gemma 3 12B}
-\label{tab:swebench}
-\small
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{lccccc}
+\centering\small
+\begin{tabular}{p{0.17\textwidth}p{0.24\textwidth}p{0.48\textwidth}}
 \toprule
-\textbf{Configuration} & \textbf{Astropy-12907} & \textbf{Astropy-14182} & \textbf{Astropy-14365} & \textbf{Patches} & \textbf{Resolved} \\
+Path & Transition/effect boundary & Scope of the contract \\
 \midrule
-A1: mini-swe-agent (native tools) & BadRequest (No tool API) & BadRequest (No tool API) & BadRequest (No tool API) & 0/3 & 0/3 (0\%) \\
-A2: mini-swe-agent (text backticks) & RepeatedFormatError (9 calls) & LimitsExceeded (30 calls) & RepeatedFormatError (11 calls) & 0/3 & 0/3 (0\%) \\
-B: NakedAgent (bash-only parity) & Stopped after failed \texttt{sed} & Invalid \texttt{sed} regex & Found bug, explained, no edit & 0/3 & 0/3 (0\%) \\
-C1: NakedAgent (system mode, raw) & Invalid (harness bracket bug) & Invalid (harness bracket bug) & Invalid (harness bracket bug) & 0/3 & 0/3 (0\%) \\
-C2: NakedAgent (CRLF text pipe) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & Patch applied (whole-file rewrite) & 3/3 (invalid CRLF) & 0/3 (0\%) \\
-C3: NakedAgent (binary write fix) & 1-hunk patch (7 regressions) & No patch (nudges exhausted) & No patch (nudges exhausted) & 1/3 valid & 0/3 (0\%) \\
+Default CLI loop & \texttt{loop.py}; model call, parser, tools & Iterative tool-call rounds; does not automatically produce the strict v0.4 replay log. \\
+One-shot event-log driver & \texttt{driver.py} and \texttt{functional.py} & Selected by \texttt{--event-log}; records admitted events, separates reducer from effects and checks available event slots before dispatch. No Sidekick Noul gate is automatically installed. \\
+Sidekick harness & \texttt{sidekick.py}; explicit provider and gate & Reuses the reducer and supports ALLOW/BLOCK/ESCALATE before tool dispatch. Its in-memory trace export is not the complete v0.4 JSONL file format. \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular}
+\caption{Distinct Python execution paths at the inspected commit. A property of one path is not automatically a property of the others.}
+\label{tab:paths}
 \end{table*}
 
-\subsection{Error Taxonomy: Scaffold vs. Model Bounds}
-The pilot revealed critical insights into the interaction between minimal scaffolds and localized language models:
+In the functional path, an admitted USER\_INPUT, MODEL\_REPLY, TOOL\_RESULT, ESCALATE, ALARM or TERMINATION consumes one event slot. Thus \texttt{max\_steps} is an event budget, not a model-token budget, wall-clock limit or number of successful tool executions. The default imperative loop counts rounds differently (Table~\ref{tab:paths}). Reporting only ``25 steps'' without naming the path is ambiguous.
+
+At the final event slot the reducer becomes terminal and suppresses returned dispatch actions. For example, with a budget of two, USER\_INPUT followed by a MODEL\_REPLY containing a tool request consumes the budget and dispatches no tool. With three slots, one synthetic tool result can be admitted. A transition receipt can contain parsed proposed actions even when the terminal transition returns no executable actions. These distinctions are covered by the companion check.
+
+The Sidekick gate's routes are ALLOW, BLOCK and ESCALATE. BLOCK adds an ALARM and terminates; ESCALATE records the held action and suspends unless the event budget is exhausted. A subsequent user event lifts suspension and the model re-decides. That is not a signed human authorization token or an atomic approval of the exact previous action. The default gate matches a short list of destructive strings and assigns fixed scores; it has no escalation band and supplies no calibrated risk probability. Broader gate policy is an extension point, not an established safety result.
+
+The standard-library MCP client is a subprocess/stdio JSON-RPC implementation with a declared 2024-11-05 protocol version. It mounts external tools into Sidekick before the first event. Stdio is a transport, not a guarantee that the child process lacks network access. The protocol's transport specification~\cite{mcptransport} does not by itself establish implementation conformance or authority isolation.
+
+\section{What offline replay establishes}
+\subsection{Reducer and hash contract}
+The core has Mealy-style form
+\[
+  \delta(S_i,E_{i+1})=(S_{i+1},A_{i+1}).
+\]
+It is a deterministic reducer over structured state, not a finite-state automaton in the strict sense: arbitrary text and metadata give an unbounded abstract state space, even with a bounded event count. The state contains a step counter and budget, message history, transition receipts, terminal status/reason, declared policy and suspension status. It does not contain a pending-action/result matching relation.
+
+Let $J$ be the implementation's UTF-8 encoding of JSON with sorted keys, compact separators, ASCII escaping and nonfinite numbers disallowed. Let $H$ denote SHA-256, $P$ the system prompt, $B$ the event budget and $Q$ the declared policy. Genesis is
+\begin{align*}
+ G &= \{\text{system\_prompt}:P,\text{max\_steps}:B,\text{policy}:Q\},\\
+ h_0 &= H(J(G)).
+\end{align*}
+For each admitted transition, the following \emph{named fields} are hashed:
+\begin{lstlisting}
+{
+  "prev_hash": h_previous,
+  "step_index": i,
+  "event": {"event_type": kind,
+            "payload": text,
+            "metadata": metadata},
+  "actions": [{"tool_name": name,
+               "args": args,
+               "content": content}, ...]
+}
+\end{lstlisting}
+The receipt calls this digest \texttt{state\_hash}, but it is not a direct serialization of every state field. State is reconstructed by replay. This is a linear hash chain, rather than a branching Merkle tree with inclusion proofs. Nor is the Python serialization a claim of cross-language JSON canonicalization. Ports need separate hash-contract tests; the current foundation conformance specification explicitly excludes the functional/replay layer.
+
+\subsection{Conditional consistency argument}
+Fix the reducer/parser implementation, initial frame, and ordered event values. If their operations are deterministic on these values, repeated replay produces the same state and proposed actions, by induction on the event index: the initial state is fixed; equality of each predecessor state and event yields equality of the next state and receipt. This is an argument about the program's defined transition function. The companion examples are checks of particular cases, not a machine-checked proof of every implementation path.
+
+The strict verifier parses the versioned header, contiguous event sequence and required final trailer; recomputes per-event hashes; compares them to the supplied hashes; and checks final status, reason, step count and hash. Post-terminal events and ignored suspended-state events are rejected. A successful log ends terminal or suspended. No provider, tool or plugin is executed during verification.
+
+With a fixed trusted reference hash outside the attacker's control and suitable hash-security assumptions, modifying committed inputs should produce a mismatch. The stock verifier has no external reference-hash argument or authenticated recorder. It compares values supplied in the same local file. A writer able to change the file can generate a different valid event sequence and recompute its entire chain and trailer. It can also replace a run with another complete, internally valid run. The required trailer catches an incomplete ending, not all malicious history replacement.
+
+\subsection{Threat model and counterexamples}
+The relevant cases differ:
 \begin{enumerate}
-    \item \textbf{Provider-Native Tool Incompatibility (A1)}: Local Ollama serving of \texttt{gemma3:12b} rejected native function calling schemas outright. Scaffolds strictly bound to provider tool APIs failed before execution began.
-    \item \textbf{Syntax Brittle Failures (A2)}: When forced to write raw bash blocks, small models struggled with command escaping and prompt-format compliance, resulting in \texttt{RepeatedFormatError} loops.
-    \item \textbf{Placeholder Echoing (C1)}: In early trials, the tool usage prompt included abstract placeholders such as \texttt{<bash command>}. Gemma 3 literally echoed the angle brackets (\texttt{<git status>}), causing bash syntax errors. Replacing prompt placeholders with concrete, literal examples eliminated this error mode.
-    \item \textbf{Host OS Newline Ingestion (C2)}: Running on Windows host systems communicating with Linux Docker containers resulted in Windows CRLF ($\backslash r \backslash n$) conversions over text pipes, causing git to treat entire files as modified. NakedAgent resolved this by enforcing binary streams across all tool I/O boundaries.
-    \item \textbf{Localized Patching (C3)}: With binary I/O and concrete usage examples, NakedAgent enabled Gemma 3 to localize and generate clean single-hunk patches on complex Astropy files without external diff packages.
-    \item \textbf{Syntactic Compliance vs. Semantic Correctness}: Although configuration C3 generated a syntactically valid single-hunk patch on \texttt{astropy-12907}, test-suite evaluation revealed 7 unit test regressions, resulting in 0/3 resolved tasks. Minimal scaffolding effectively removes harness friction, but semantic problem-solving on complex issues remains bounded by local model parameters.
+\item \textbf{Accidental or partial modification:} editing a payload while retaining its recorded hashes is rejected.
+\item \textbf{Coherent replacement:} editing events and recomputing hashes can pass. There is no signature-based origin authentication, non-repudiation or independently witnessed history in the current log.
+\item \textbf{False effect report:} a TOOL\_RESULT can be admitted without a prior matching tool request. The reducer records it as input, so replay alone does not establish dispatch causality or that the stated result is true.
+\item \textbf{Different environment:} identical reported inputs replay identically even if the model identity, executed binary, files or external effects were misreported. The declared model/workspace fields are commitments to labels, not measurements of those resources.
 \end{enumerate}
 
-\section{Security Analysis}
+The companion \texttt{paper/check\_claims.py} exercises these distinctions. In particular, coherent replacement and an unrequested TOOL\_RESULT are \emph{expected acceptance} cases. Their acceptance limits the claim rather than demonstrating a failure of deterministic hashing. A transparency design with signed checkpoints, retained independent copies and consistency verification would add different guarantees; Certificate Transparency illustrates such additional machinery~\cite{rfc9162}. We do not claim that NakedAgent implements that protocol.
 
-\subsection{Attack Surface Elimination}
-By enforcing $|\mathcal{D}_{\text{runtime}}| = 0$, NakedAgent eliminates the entire attack surface associated with dependency confusion, typosquatting, compromised sub-dependencies, and unpatched upstream CVEs in network libraries.
+The event writer flushes records but does not establish immutable storage. A new log normally opens in write mode; resuming a suspended run replaces its final trailer before appending continuation events. ``Append-only'' describes ordinary event accumulation during a run, not an enforced storage property or crash-proof durability. Logs may contain prompts, source text and tool results; confidentiality and retention need deployment policy.
 
-\subsection{Shell Sandboxing and Injection Defense}
-Because the shell tool is the most sensitive primitive, NakedAgent implements multi-stage defensive gates:
-\begin{itemize}
-    \item In automated execution, commands must match an approved argv prefix.
-    \item Arguments are tokenized using POSIX shell lexical parsing (\texttt{shlex.split}), preventing command-chaining injection attacks (such as semicolons \texttt{;}, logical operators \texttt{\&\&}, or command substitutions \texttt{\$(...)}).
-    \item Path validation routines guarantee that file writes cannot escape designated workspace roots via directory traversal (\texttt{../../}).
-\end{itemize}
+\section{Omakase: replace the opinion, retain the seam}
+NakedAgent's Omakase doctrine offers four selected tools while allowing operators to substitute implementations without replacing the dispatcher. A Python plugin exports \texttt{TOOLS}, \texttt{DISABLE}, or both. Workspace-local plugins require explicit trust; user-global plugins are always considered. Later directories and files override earlier tools, after which disabled names are removed.
 
-\subsection{Plugin Gating and Protected Surfaces}
-Eliminating third-party dependencies does not eliminate environmental risks from untrusted repositories or ambient shell binaries. To prevent repository-drop code execution (where a cloned project includes malicious code in \texttt{.nakedagent/plugins/}), NakedAgent disables workspace-local plugins by default, requiring an explicit \texttt{--trust-plugins} CLI flag. Furthermore, the \texttt{write} and \texttt{patch} tools enforce protected surface boundaries preventing modifications to \texttt{.git/} or \texttt{.nakedagent/}, and automated production workloads are strictly recommended to execute within containerized sandboxes.
+The useful coupling is between registry and prompt: a tool's optional \texttt{.usage} attribute contributes its example, and tools without that attribute are listed by name. Replacing a patch implementation and its usage text updates the advertised interface together. This reduces one source of prompt/dispatch disagreement; it does not check that the example correctly describes the function or that a model follows it.
 
-\section{Related Work}
-\textbf{Coding Agents}: SWE-agent~\cite{yang2024sweagent} introduced specialized agent-computer interfaces (ACI) tailored for repository navigation. Aider~\cite{gauthier2023aider} popularized in-terminal pair programming with git-anchored search/replace editing. OpenHands~\cite{openhands2024} established a generalist agent runtime platform. NakedAgent distinguishes itself by proving that these core capabilities can be achieved without the 30+ package dependencies characteristic of existing systems.
+Disabling \texttt{shell}, \texttt{write} and \texttt{patch} removes the three mutating \emph{foundation} tools. Disabling only shell and write leaves patch available. Neither configuration proves a whole process read-only: plugin imports execute arbitrary Python and may add effects under any tool name. Dependency minimalism and extension freedom therefore pull in different directions. A deployment must inventory its active tools, imported plugins and external programs separately from the foundation package.
 
-\textbf{Execution Proofs and Governance}: Krineia~\cite{bowlby2026krineia} established formal standards for append-only audit logs in AI governance. NakedAgent implements these principles at the code generation layer through its Merkle-linked Mealy state reducer and zero-inference replay verifier.
+\section{Historical pilot and evidence limits}
+\subsection{What survives in the repository}
+The September 14, 2026 report \texttt{bench/RESULTS.md} records an exploratory comparison on three SWE-bench Lite instances: astropy\_\_astropy-12907, -14182 and -14365. It reports local \texttt{gemma3:12b}, an RTX 3080 Ti with 12 GB VRAM, Docker Desktop/WSL2, a 30-step cap, 60-second command timeout, and mini-swe-agent 2.4.6. The original run used a worktree with uncommitted modifications; the report does not identify a complete immutable source snapshot, model digest or full sampling configuration.
 
-\section{Discussion and Limitations}
-While standard-library minimalism delivers security and portability, it entails calculated trade-offs:
-\begin{itemize}
-    \item \textbf{Lack of Streaming UI}: Without third-party libraries like \texttt{rich} or \texttt{blessed}, streaming token visualization in the terminal is intentionally rudimentary.
-    \item \textbf{Network Transport}: Using \texttt{urllib.request} lacks built-in HTTP/2 multiplexing and requires manual connection pooling for high-throughput concurrency.
-    \item \textbf{Patch Complexity}: The foundation \texttt{patch} tool relies on exact substring matching. While unambiguous, it requires models to reproduce exact surrounding context lines, whereas fuzzy diff engines tolerate minor whitespace variations.
-\end{itemize}
+The repository tracks a runner, scorer and narrative summary. The listed prediction/trajectory directories and raw scoring outputs are absent from the pinned tree. Table~\ref{tab:pilot} therefore reports \emph{source-reported observations}, not reproduced results. No model or SWE-bench run was performed for this revision. A model tag alone does not verify quantization or immutable weights; the earlier manuscript's precise quantization and default-temperature claims are not adopted without a run manifest.
 
-\section{Conclusion and Availability}
-NakedAgent demonstrates that a zero-runtime-dependency coding agent is not merely a theoretical curiosity, but a robust, auditable, and production-viable architecture. By relying exclusively on Python standard-library primitives, Markdown code-fence parsing, an Omakase plugin seam, and a Merkle-verified Mealy state reducer, NakedAgent provides an uncompromised foundation for autonomous software engineering.
+\begin{table*}[t]
+\centering\small
+\begin{tabular}{p{0.20\textwidth}p{0.48\textwidth}p{0.22\textwidth}}
+\toprule
+Historical configuration & Reported observation & Evidential status \\
+\midrule
+A1 mini-swe-agent native tools & Provider rejected native tool requests on all three instances & Setup incompatibility; not a reasoning-capability measurement \\
+A2 text backticks & Format failures after 9 and 11 calls; one 30-call limit & No patches reported; no raw trajectories reproduced \\
+B NakedAgent bash-only & Failed edits or explanation without editing; no patches & Descriptive failure analysis; unmatched sampling \\
+C1 system-mode adapter & Placeholder angle brackets copied into shell commands & Invalid harness run; exclude from comparative scoring \\
+C2 placeholder correction & Three patches, but text-pipe CRLF conversion rewrote whole files & Invalid harness output; historical scorer also reports 0/3 \\
+C3 binary-pipe correction & One single-hunk patch; two empty patches; scorer reports two target failures and seven regressions for 12907 & Reported 0/3 resolved; not independently reproduced \\
+\bottomrule
+\end{tabular}
+\caption{Historical pilot evidence. These are repeated configurations on the same three selected instances, not eighteen independent tasks or a controlled benchmark.}
+\label{tab:pilot}
+\end{table*}
 
-\subsection{Availability}
-The complete source code, test suite, benchmark harnesses, and replication logs are publicly available:
-\begin{itemize}
-    \item \textbf{GitHub}: \url{https://github.com/hummbl-io/nakedagent}
-    \item \textbf{PyPI}: \texttt{pip install nakedagent}
-    \item \textbf{Zenodo Archive}: DOI: \href{https://doi.org/10.5281/zenodo.23001340}{10.5281/zenodo.23001340}
-\end{itemize}
+\subsection{Interpretation}
+The pilot preserves useful engineering hypotheses: provider capability mismatch can prevent a run; tool examples can be echoed literally; Windows text pipes can contaminate Linux patch bytes; and a localized patch can still fail semantic tests. These observations motivate controlled probes. They do not show that a smaller model's parameters caused the final failure or that minimal scaffolding removes all harness friction. Both the adapter and sampling conditions changed across configurations. In particular, mini-swe-agent used temperature zero while the NakedAgent report says the provider default was used; the numeric value of that default was not recorded.
+
+Invalid C1/C2 outputs must be distinguished from valid unsuccessful attempts. The reported C3 zero of three is descriptive of this small selected case study, not an estimate of general SWE-bench performance. Absence of raw trajectories prevents reclassification of individual failures or verification of the seven-regression count here.
+
+\subsection{Prospective evaluation}
+A comparative study should freeze source and plugin hashes, model/quantization digest, provider version, prompts, decoding parameters, task selection, base commits, container images and scoring version. Repeat matched runs across preregistered task strata and report run-level variation. Keep invalid infrastructure attempts separate from valid attempts; disclose both and a predetermined rerun rule. Save request/response traces, exact patch bytes, exit status and complete grader output.
+
+Separate outcomes should include parse acceptance, tool dispatch, patch applicability, target-test improvement, preserved regression tests, final resolution, latency and token/cost budgets. A useful ablation changes one of fenced-vs-native invocation, concrete-vs-placeholder examples, or file-tool-vs-shell editing while holding the other conditions fixed. The historical pilot cannot substitute for those comparisons.
+
+\section{Security and engineering limitations}
+Removing third-party Python runtime packages reduces one set of update and package-selection obligations. It does not eliminate vulnerabilities in the interpreter, TLS stack, executable search path, provider, plugins or project scripts. No dependency-count survey or measured risk reduction is claimed for competing agents. Nor does the existence of a small implementation establish production readiness.
+
+The noninteractive shell boundary depends on direct argument-vector execution and the selected executable's semantics, not on tokenization alone. An allowed interpreter or program with execution-capable flags may exercise broad authority. Interactive shell syntax, Windows batch files and environment-dependent executable resolution require separate analysis. Workspace path checks are not a proof against all symlink races, mount changes or filesystem aliases.
+
+Replay also has engineering limits. It verifies one pinned semantics against reported events, not that every event admitted by the reducer could be produced by the live driver. The current genesis does not automatically measure the provider endpoint, binary, plugin source, full shell policy or workspace snapshot. The immutable tuple-based trace/history construction also copies growing sequences; no asymptotic or empirical performance advantage is established. Bounded event counts do not bound individual model responses, file sizes or arbitrary tool costs.
+
+The contribution remains useful within these limits: one can inspect the effect boundary, substitute a tool together with its prompt example, test the parser without a model and replay a recorded state trajectory without re-executing effects. Those are concrete mechanisms on which a larger evaluation or stronger recorder can build.
+
+\section{Reproducibility and availability}
+The source is linked at an exact commit~\cite{nakedagentsource}. The paper README maps each claim to source files, distinguishes frozen artifacts from the living manuscript, and gives build commands. The post-hoc notebook records which checks were actually run. The following checks require no model service:
+\begin{lstlisting}
+python paper/check_claims.py
+python -m examples.replay_demo
+python -m unittest discover -s tests
+\end{lstlisting}
+The first command verifies the pinned runtime source inventory and eight synthetic claim checks. The repository's broader tests include parser, path, budget, log, resume and transport cases; passing them is regression evidence, not exhaustive verification. Rebuilding this paper does not regenerate historical benchmark trajectories or a deposited PDF. A future release should archive the exact manuscript, code snapshot, check outputs and any newly collected experimental data together.
 
 \bibliographystyle{plain}
 \bibliography{references}
-
 \end{document}
