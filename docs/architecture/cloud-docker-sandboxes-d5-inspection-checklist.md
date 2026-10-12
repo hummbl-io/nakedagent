@@ -78,4 +78,36 @@ loading more compute** onto Docker Cloud Sandboxes.
 
 ---
 
-_Prepared by opencode. Status: ready to run once the operator completes `sbx login`._
+_Prepared by opencode._
+
+## Results — executed 2026-10-12
+
+**Auth/infra:** the local `sbx` daemon required `sbx daemon start`; the Docker
+Desktop sign-in is **not** the `sbx` CLI token (`sbx login` is separate).
+`sbx` v0.46.0 (v0.47.0 available).
+
+**Inventory (pre-cleanup):** 12 cloud sandboxes, **all TTL-expired** (24h
+ceiling): `nakedagent-pilot-a`, `p2-preflight`, `p2-soak`,
+`gyre-arena-recorder`, `skill-hardening a–f`, `parallax-quilt ×2`.
+Clean baseline: no cloud templates, no secrets, no volumes; account policy
+`default: deny-all`.
+
+**Live probe** (`sbx_001m4s77ftqqf5exbmfbb7hw300`, shell, `--deny-network '**'`,
+`--ttl 30m --on-timeout delete`):
+- Policy rendered as `Default allow-all` + `DENY **`.
+- Inside the guest: `EGRESS=BLOCKED`, `DNS=FAIL`, `uid=1000` (non-root).
+- Stopped and removed cleanly.
+- Bootstrap-egress behavior was **not** re-tested this run (pilot's open item).
+
+**Image identity (resolved):** agent-create uses the mutable tag
+`docker/sandbox-templates:shell-docker`; resolved digest
+`sha256:1560168ac5fb9ce23d413c878349334c5845c07e264cd675d7867f0c78ad1761`
+→ pin with `--image-ref docker/sandbox-templates@sha256:1560…`.
+
+**Cleanup (operator-approved):** all 12 expired orphans removed
+(`sbx --cloud rm --force`); account left with 1 sandbox
+(`shell/devin-cloud-20261013-a`, devin's).
+
+**Still open:** credit/billing reconciliation (Docker console; up to 48h lag).
+
+**Evidence:** `PROJECTS/_outputs/cloud-docker-sbx-d5-20261012/`.
