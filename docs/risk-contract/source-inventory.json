@@ -1,0 +1,68 @@
+{
+  "observed_at": "2026-10-03T19:43:08.505342+00:00",
+  "source_head": "105061c4674a4e0666c4515c99476abe214a145a",
+  "kind": "static-source-inventory-not-runtime-attestation",
+  "records": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "37311c4d12754eecf2158abd40c45d8f54d592cdf063510aeb0e277ee46b5f30",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/cli.py",
+      "sha256": "34c8bd902720178e0068401c26a5d208aad4d16b761ad380de15a73467a2607d",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/loop.py",
+      "sha256": "dceaa01bc34f7fbf0c9c0e1ff9d3bd56647a324419557da36ad8c8bff2f6a467",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/tools.py",
+      "sha256": "01e63db1effcaf0cf452dac1241c0bcc5bcec2f958e2ce8c113e94e6f610bc64",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/plugins.py",
+      "sha256": "1a573621cd338d7913a45de7b6d282ffcd492dcdae92a9db7bd9f22dc417dcd0",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/llm.py",
+      "sha256": "7117108a657a4bc3efe14d5788930240633bcfb4f97bf40355b55ff7023aa8de",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/driver.py",
+      "sha256": "4b57083e8f10f8fe3af3588ced14334704ffaa688807a77a57858d54d85376be",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/mcp.py",
+      "sha256": "cf2a1ba4e1818ecc4c7031fdd66efda6733c84b6a6b7a58c387c7fcb4d3fa40f",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "nakedagent/sidekick.py",
+      "sha256": "80e4ea87fd5f44b125d617b50c32a67fd5150bc615d978d2a6691d5633b9654f",
+      "scope": "source-review-input"
+    },
+    {
+      "path": "C:\\Users\\Owner\\.agents\\scripts\\nakedagent_hexad.py",
+      "sha256": "8abae1eb9a4b045f2879161c854d1933e1b1074c9e53600ffe730ed636068ebe",
+      "scope": "external-adapter-static-review"
+    },
+    {
+      "path": "C:\\Users\\Owner\\.nakedagent\\plugins\\hexad.py",
+      "sha256": "b6a1be3252b11221298565e230588b106f909f1a29c82f6ecf68e6c89a72f6ce",
+      "scope": "inventory-only-not-imported-or-reviewed"
+    }
+  ],
+  "limitations": [
+    "No credentials read",
+    "No plugins imported",
+    "No complete transitive or host permission inventory",
+    "Unsigned inventory; digest is not authority"
+  ]
+}

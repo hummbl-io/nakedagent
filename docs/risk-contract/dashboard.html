@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>nakedagent · Create a player</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#10151d;color:#e4ecf5}*{box-sizing:border-box}body{margin:0}header,main{max-width:1250px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #33404e}h1{font-size:28px;margin:8px 0}h2{font-size:18px}p{color:#b6c6d8;line-height:1.6}.tag{color:#83e2c4;font:12px monospace;letter-spacing:2px}.banner{background:#3a2d19;color:#ffda91;padding:16px;border-radius:10px;margin-bottom:24px}.layout{display:grid;grid-template-columns:340px 1fr;gap:24px}.panel{background:#18212d;border:1px solid #344354;border-radius:14px;padding:22px;margin-bottom:20px}.option{display:block;padding:14px 0;border-bottom:1px solid #344354;cursor:pointer}.option span{display:block;font-size:13px;color:#b6c6d8;margin:6px 0 0 26px}input{accent-color:#83e2c4}select,button{font:inherit;background:#243245;color:#fff;border:1px solid #617289;border-radius:6px;padding:10px}button:disabled{opacity:.65;cursor:not-allowed}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.metric{padding:18px;background:#202d3e;border-radius:10px}.metric strong{display:block;font-size:25px;margin-bottom:8px}.metric span{color:#b6c6d8;font-size:13px}li{margin:12px 0;line-height:1.5}.path{font-family:monospace;font-size:14px;color:#83e2c4;padding:12px;background:#10151d;border-radius:6px;margin:8px 0;overflow-wrap:anywhere}.muted{color:#b6c6d8;font-size:13px}#history{max-height:180px;overflow:auto}.footer{display:flex;gap:12px;flex-wrap:wrap;align-items:center}a{color:#83e2c4}:focus-visible{outline:3px solid #ffda91;outline-offset:4px}@media(max-width:850px){.layout{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}header{display:block}}
+</style>
+<header><div><div class="tag">HUMMBL / FLEET OPERATIONS</div><h1>Create a player</h1><p>Build an agent's loadout. Inspect what each attachment makes reachable.</p></div><label>Audience <select id="audience"><option>Fleet operator</option><option>Developer</option></select></label></header>
+<main><div class="banner"><strong>SCENARIO PROTOTYPE · NO LIVE TELEMETRY</strong><br>All graph edges and evidence states below are synthetic. Nothing launches, connects, or changes your permissions.</div>
+<div class="layout"><aside><section class="panel"><div class="tag">01 / FOUNDATION</div><h2>nakedagent</h2><p>Foundation file tools and a model route. Actual process containment is unverified.</p><p class="muted">Source reviewed: 105061c · Contract 0.1.0 draft</p></section>
+<section class="panel"><div class="tag">02 / EQUIPMENT</div><div id="options"></div></section>
+<section class="panel"><div class="tag">03 / EVIDENCE SCENARIO</div><label class="option"><input id="fresh" type="checkbox" checked> Fresh control evidence<span>Toggle to simulate expired observations.</span></label><label class="option"><input id="complete" type="checkbox"> Enumerated graph complete<span>Simulation assumption only; never a claim about Anvil.</span></label></section></aside>
+<div><section class="panel"><div class="tag">COMPOSITION PREVIEW</div><h2 id="mission">Fleet mission: scoped workspace assistance</h2><div class="metrics"><div class="metric"><strong id="count"></strong><span>Reachable modeled effects</span></div><div class="metric"><strong>Unknown</strong><span>Real-world risk probability</span></div><div class="metric"><strong>Not connected</strong><span>Runtime sensors</span></div></div><p id="delta" aria-live="polite"></p><div id="paths"></div><p class="muted">Paths express potential reach in this scenario. They do not establish that an effect occurred.</p></section>
+<section class="panel"><div class="tag">EVIDENCE & CONTROL GAPS</div><ul id="gaps"></ul><div class="footer"><button disabled>Launch unavailable</button><span class="muted">Enforcement adapters and trusted observations are required.</span></div></section>
+<section class="panel"><div class="tag">CONFIGURATION HISTORY · LOCAL PAGE ONLY</div><ol id="history"></ol><button id="reset">Reset scenario</button></section>
+</div></div><p class="muted">Potential reach ≠ observed activity ≠ expected loss. See <a href="CONTRACT.md">the risk contract</a> for source findings, runtime requirements and review gates. No settings are persisted.</p></main>
+<script>
+'use strict';
+const modules=[
+{id:'hexad',name:'Hexad procedure',note:'Adds reasoning stages, artifact storage and a provider route.',edges:[['agent','Hexad'],['Hexad','local artifact writes'],['Hexad','model endpoint']]},
+{id:'decide',name:'Decide-0 advisory helper',note:'Adds a policy opinion. It cannot grant execution authority.',edges:[['agent','Decide-0'],['Decide-0','advisory output']]},
+{id:'shell',name:'Shell execution',note:'Exposes the process principal; command-prefix checks are not isolation.',edges:[['agent','shell'],['shell','principal-accessible resources'],['shell','inherited credentials']]},
+{id:'plugin',name:'Python plugin',note:'Import itself executes code; requires admission before import.',edges:[['agent','plugin import'],['plugin import','principal-accessible resources'],['plugin import','inherited credentials']]},
+{id:'remote',name:'Remote model route',note:'Conversation/tool results can cross a service boundary.',edges:[['model endpoint','remote data transfer']]},
+{id:'credential',name:'Scoped credential broker',note:'Adds a credential lease; containment and revocation must be verified.',edges:[['agent','credential broker'],['credential broker','service action']]}
+];
+const effects=new Set(['workspace read','workspace mutation','model endpoint','local artifact writes','advisory output','principal-accessible resources','inherited credentials','remote data transfer','service action']);
+const base=[['agent','workspace read'],['agent','workspace mutation'],['workspace read','tool output'],['tool output','model endpoint']];
+let previous=null, sequence=0;
+const options=document.getElementById('options');
+for(const m of modules){const label=document.createElement('label');label.className='option';const input=document.createElement('input');input.type='checkbox';input.id=m.id;label.append(input,document.createTextNode(' '+m.name));const note=document.createElement('span');note.textContent=m.note;label.append(note);options.append(label);}
+function render(){
+ const selected=modules.filter(m=>document.getElementById(m.id).checked);
+ const edges=[...base,...selected.flatMap(m=>m.edges)];
+ const paths=new Map([['agent',['agent']]]);let changed=true;
+ while(changed){changed=false;for(const [a,b] of edges){if(paths.has(a)&&!paths.has(b)){paths.set(b,[...paths.get(a),b]);changed=true;}}}
+ const reached=[...paths.keys()].filter(n=>effects.has(n));document.getElementById('count').textContent=reached.length;
+ const holder=document.getElementById('paths');holder.replaceChildren();
+ for(const n of reached){const el=document.createElement('div');el.className='path';el.textContent=paths.get(n).join(' → ');holder.append(el);}
+ const additions=previous?reached.filter(n=>!previous.includes(n)):[];
+ const removed=previous?previous.filter(n=>!reached.includes(n)):[];
+ document.getElementById('delta').textContent=previous?'Change: '+additions.length+' added effects, '+removed.length+' removed. Paths and controls must also be reviewed.':'Baseline scenario loaded.';
+ const gaps=['No OS containment, authenticated runtime sensors or execution broker connected.','Real deployment inventory and authority are unverified; no total blast-radius upper bound.'];
+ if(!document.getElementById('fresh').checked)gaps.push('Simulated evidence expired: hold proposed actions pending fresh evidence.');
+ if(!document.getElementById('complete').checked)gaps.push('Scenario inventory marked incomplete. Unknown paths remain.');
+ if(selected.some(m=>m.id==='hexad'))gaps.push('Hexad: explicit provider routing and retention controls required; inspected adapter can choose a remote default.');
+ if(selected.some(m=>['shell','plugin'].includes(m.id)))gaps.push('Execution/import: in-process code can use principal authority beyond foundation tool checks.');
+ if(selected.some(m=>m.id==='remote'))gaps.push('Composition: workspace read → tool output → model endpoint → remote transfer. Disclosure is possible without a shell.');
+ if(selected.some(m=>m.id==='credential'))gaps.push('Credential broker is hypothetical: scoped issuance, expiry and revocation latency unverified.');
+ const list=document.getElementById('gaps');list.replaceChildren();for(const text of gaps){const li=document.createElement('li');li.textContent=text;list.append(li);}
+ const row=document.createElement('li');row.textContent='Scenario '+(++sequence)+': '+(selected.map(m=>m.name).join(', ')||'foundation only')+' · '+reached.length+' modeled effects';document.getElementById('history').prepend(row);previous=reached;
+ document.getElementById('mission').textContent=document.getElementById('audience').value==='Fleet operator'?'Fleet mission: scoped workspace assistance':'Developer mission: inspect your agent configuration';
+}
+document.querySelectorAll('input,select').forEach(el=>el.addEventListener('change',render));
+document.getElementById('reset').addEventListener('click',()=>{modules.forEach(m=>document.getElementById(m.id).checked=false);document.getElementById('fresh').checked=true;document.getElementById('complete').checked=false;document.getElementById('history').replaceChildren();previous=null;sequence=0;render();});
+render();
+</script></html>
