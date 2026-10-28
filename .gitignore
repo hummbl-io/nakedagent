@@ -10,6 +10,7 @@ dist/
 _internal/
 _between/
 _external/
+_review/
 
 # nakedagent runtime state (audit logs, workspace plugins) -- never commit
 .nakedagent/

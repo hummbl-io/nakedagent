@@ -1,0 +1,13 @@
+title = "nakedagent gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "False-positive generic-api-key match on slash-separated prose in historical commit a46409d3c7b0b01d78b2936082aff1df435ba4c2 (issue #49)"
+commits = [
+    "a46409d3c7b0b01d78b2936082aff1df435ba4c2",
+]
+paths = [
+    '''docs/risk-contract/PILOT-RESULTS\.md''',
+]
