@@ -63,19 +63,23 @@ def _fence_ticks(line: str) -> int:
 def parse(text: str) -> list[ToolCall]:
     """Return every tool call found in `text`, in the order they appear.
 
-    Unclosed blocks yield a refusal ToolCall (tool ``__refused__``) so the
-    refusal is surfaced to the model instead of silently dropping the call
-    and every later call the unclosed body would have swallowed.
+    Unclosed blocks or blocks desynchronized by a spoofed/unmatched bare
+    closing fence yield a refusal ToolCall (tool ``__refused__``) so the
+    refusal is surfaced to the model instead of silently truncating a call or
+    dispatching a fabricated inner ``shell`` block.
     """
     # CRLF normalize, then split ONLY on \n: str.splitlines() also splits on
     # \x85, \u2028, \u2029, \v, \f and friends, which would fabricate a
     # column-0 fence out of what markdown treats as mid-line text.
     lines = text.replace("\r\n", "\n").split("\n")
     calls: list[ToolCall] = []
+    unmatched_bare_close = False
     i, n = 0, len(lines)
     while i < n:
         m = _OPEN_RE.match(lines[i])
         if not m:
+            if _bare_ticks(lines[i]) == 3:
+                unmatched_bare_close = True
             i += 1
             continue
 
@@ -107,7 +111,7 @@ def parse(text: str) -> list[ToolCall]:
                 i += 1
                 continue
             ticks = _fence_ticks(line)
-            if ticks:
+            if ticks >= stack[-1]:
                 stack.append(ticks)
             body.append(line)
             i += 1
@@ -120,5 +124,15 @@ def parse(text: str) -> list[ToolCall]:
                 args=tool,
                 content=f"unclosed fence for '{tool}'; call refused",
             ))
+
+    if unmatched_bare_close and calls:
+        first_tool = calls[0].args if calls[0].tool == "__refused__" else calls[0].tool
+        return [
+            ToolCall(
+                tool="__refused__",
+                args=first_tool,
+                content=f"spoofed or unmatched closing fence in '{first_tool}'; call refused",
+            )
+        ]
 
     return calls
