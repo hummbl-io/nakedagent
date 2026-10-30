@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def fixture_git_env():
+    # Hooks export Git context that would redirect temporary fixture commands
+    # into the invoking repository. These offline fixtures must own their Git
+    # context, including config overrides, object paths, and index location.
+    return {key: value for key, value in os.environ.items()
+            if not key.upper().startswith("GIT_")}
+
+
+def fixture_git(args, cwd):
+    return subprocess.run(["git", "-c", "core.autocrlf=false", *args], cwd=cwd,
+                          env=fixture_git_env(), capture_output=True, text=True,
+                          encoding="utf-8", timeout=10, check=False)
 
 
 class Rows(list):
@@ -94,8 +109,7 @@ class RunnerIntegrityTests(unittest.TestCase):
         repo.mkdir()
 
         def git(args, cwd=repo):
-            return subprocess.run(["git", "-c", "core.autocrlf=false", *args], cwd=cwd,
-                                  capture_output=True, text=True, encoding="utf-8", timeout=10, check=False)
+            return fixture_git(args, cwd)
 
         self.assertEqual(git(["init", "-q"]).returncode, 0)
         (repo / "tracked.txt").write_bytes(b"old\n")
@@ -143,11 +157,34 @@ class RunnerIntegrityTests(unittest.TestCase):
         self.assertEqual(git(["add", "."], applied_repo).returncode, 0)
         applied = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", "--binary", "-"],
                                  cwd=applied_repo, input=result.encode("utf-8"), capture_output=True,
-                                 timeout=10, check=False)
+                                 env=fixture_git_env(), timeout=10, check=False)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         for filename in ("tracked.txt", "staged new.txt", "new file.txt", "new.bin", "empty.txt"):
             self.assertEqual((applied_repo / filename).read_bytes(), (repo / filename).read_bytes())
         self.assertFalse((applied_repo / "deleted.txt").exists())
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for the temporary index fixture")
+    def test_git_fixture_ignores_inherited_hook_context(self):
+        sentinel = self.root / "sentinel"
+        sentinel.mkdir()
+        self.assertEqual(fixture_git(["init", "-q"], sentinel).returncode, 0)
+        (sentinel / "keep.txt").write_text("preserve this index", encoding="utf-8")
+        self.assertEqual(fixture_git(["add", "keep.txt"], sentinel).returncode, 0)
+        config = sentinel / ".git" / "config"
+        index = sentinel / ".git" / "index"
+        before = (config.read_bytes(), index.read_bytes())
+        with patch.dict(os.environ, {
+            "GIT_DIR": str(sentinel / ".git"),
+            "GIT_WORK_TREE": str(sentinel),
+            "GIT_INDEX_FILE": str(index),
+            "GIT_COMMON_DIR": str(sentinel / ".git"),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.bare",
+            "GIT_CONFIG_VALUE_0": "true",
+        }):
+            self.test_staged_unstaged_untracked_and_binary_changes_preserve_index()
+        self.assertEqual((config.read_bytes(), index.read_bytes()), before)
+        self.assertEqual(sorted(p.name for p in sentinel.iterdir()), [".git", "keep.txt"])
 
     def test_baseline_is_captured_before_model_changes_head(self):
         initial = self.baseline
