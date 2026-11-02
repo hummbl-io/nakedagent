@@ -24,7 +24,7 @@ When depositing via [Zenodo New Upload](https://zenodo.org/uploads/new):
 | **Title** | `NakedAgent: A Zero-Dependency Coding Agent Architecture via Standard-Library Primitives and Provable Replay` |
 | **Publication date** | `2026-09-25` (or date of deposit) |
 | **Authors** | Family: `Bowlby`, Given: `Reuben` |
-| **Affiliation** | `HUMMBL, LLC` |
+| **Affiliation** | `HUMMBL` |
 | **ORCID** | `0009-0002-5620-1103` |
 | **License** | `Creative Commons Attribution 4.0 International` (CC-BY-4.0) |
 | **Language** | English (`eng`) |

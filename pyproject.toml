@@ -14,7 +14,7 @@ authors = [
     { name = "Reuben Bowlby", email = "reuben@hummbl.io" },
 ]
 maintainers = [
-    { name = "HUMMBL, LLC", email = "reuben@hummbl.io" },
+    { name = "HUMMBL", email = "reuben@hummbl.io" },
 ]
 keywords = [
     "coding-agent",
