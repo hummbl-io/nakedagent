@@ -12,7 +12,7 @@ C:\Users\Owner\PROJECTS\nakedagent\paper\nakedagent_paper.pdf
 ## 1. Universal Author & License Metadata
 
 - **Primary Author:** Reuben Bowlby
-- **Affiliation:** HUMMBL, LLC
+- **Affiliation:** HUMMBL
 - **Email:** reuben@hummbl.io
 - **ORCID:** [0009-0002-5620-1103](https://orcid.org/0009-0002-5620-1103)
 - **License:** Creative Commons Attribution 4.0 International (CC-BY-4.0)
